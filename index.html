@@ -1,0 +1,1479 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>GaddAtlas — Quer Pasticciaccio brutto de via Merulana</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --bg:#07070f;--panel:#0c0c1c;--border:rgba(255,255,255,0.07);
+  --text:#d4d4e8;--dim:#6a6a88;--accent:#c0392b;
+  --c-marker:#4fc3f7;--c-setting:#ffb74d;--c-project:#ba68c8;--c-route:#81c784;
+  --font:'Helvetica Neue',Arial,sans-serif;
+}
+html,body{width:100%;height:100%;background:var(--bg);overflow:hidden;font-family:var(--font)}
+
+/* NAV */
+#navbar{
+  position:fixed;top:0;left:0;right:0;height:52px;
+  background:rgba(5,5,12,0.97);border-bottom:1px solid var(--border);
+  display:flex;align-items:center;justify-content:space-between;
+  padding:0 24px;z-index:3000;
+}
+#navbar .brand{display:flex;align-items:center;gap:12px}
+#navbar .dot{width:8px;height:8px;border-radius:50%;background:var(--accent)}
+#navbar .name{font-size:15px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:#fff}
+#navbar .sub{font-size:11px;color:var(--dim);letter-spacing:.06em}
+#navbar .chapter{font-size:11px;color:var(--dim);letter-spacing:.1em;text-transform:uppercase}
+
+/* APP */
+#app{position:fixed;top:52px;left:0;right:0;bottom:0}
+
+/* MAP */
+#map-wrap{position:absolute;inset:0;z-index:1;transition:filter .8s ease}
+#map-wrap.blurred{filter:blur(8px) brightness(.55)}
+#map{width:100%;height:100%}
+#map-dimmer{position:absolute;inset:0;z-index:5;background:rgba(4,4,12,0);pointer-events:none;transition:background .3s}
+
+/* VORONOI SVG */
+#voronoi-svg{
+  position:absolute;top:0;left:0;width:100%;height:100%;
+  z-index:400;pointer-events:auto;
+}
+.cs-border.hover{filter:drop-shadow(0 0 8px currentColor)}
+
+/* EXPLORE OVERLAY — centered on map */
+#explore-overlay{
+  position:absolute;inset:0;z-index:500;
+  display:flex;align-items:flex-start;justify-content:center;
+  overflow-y:auto;
+  padding:24px 20px 104px;
+  pointer-events:none;
+  visibility:hidden;
+}
+#explore-overlay.active{visibility:visible;pointer-events:auto}
+#explore-overlay.no-anim{opacity:1!important}
+#explore-inner{
+  position:relative;
+  display:flex;flex-direction:column;align-items:center;
+  gap:0;
+  width:min(760px,100%);
+}
+
+/* VIEW LABEL */
+.view-header{
+  text-align:center;margin-bottom:16px;
+}
+.view-label{
+  display:block;font-size:9px;letter-spacing:.2em;text-transform:uppercase;
+  color:var(--dim);margin-bottom:3px;
+}
+.view-title{
+  font-size:22px;font-weight:700;color:#fff;letter-spacing:.03em;
+}
+
+/* TILE GRID — character view */
+#char-grid{
+  display:grid;
+  grid-template-columns:repeat(3,1fr);
+  grid-template-rows:auto auto;
+  gap:16px;
+  max-width:660px;width:100%;
+}
+#char-grid .row2{
+  grid-column:1/-1;
+  display:flex;justify-content:center;gap:16px;
+}
+
+/* TILE GRID — scene view */
+#scene-grid{
+  display:grid;
+  gap:12px;
+  max-width:780px;width:100%;
+  grid-template-areas:
+    "route  route  route  route"
+    "set1   set2   sgv    prj"
+    "set3   set4   set5   .";
+  grid-template-columns:repeat(4,1fr);
+}
+.route-row{
+  grid-area:route;
+  display:flex;align-items:center;justify-content:center;
+  gap:0;position:relative;
+}
+#set1{grid-area:set1}
+#set2{grid-area:set2}
+#set3{grid-area:set3}
+#set4{grid-area:set4}
+#set5{grid-area:set5}
+#sg-tile  {grid-area:sgv}
+#prj-tile {grid-area:prj}
+
+/* ROUTE CONNECTOR (SVG drawn on top) */
+.route-arr{
+  flex-shrink:0;display:flex;align-items:center;
+  padding:0 4px;opacity:.7;
+}
+.route-arr svg{display:block}
+
+/* TILE CARD */
+.tile-card{
+  position:relative;cursor:pointer;
+  display:flex;flex-direction:column;align-items:stretch;
+  justify-self:center;
+  opacity:0;
+  filter:drop-shadow(0 16px 24px rgba(0,0,0,.42));
+  transition:transform .2s,filter .2s;
+}
+.tile-card:hover{transform:translateY(-4px);filter:drop-shadow(0 20px 34px rgba(0,0,0,.56))}
+.tile-card.floating-tile{filter:drop-shadow(0 22px 34px rgba(186,104,200,.22)) drop-shadow(0 18px 24px rgba(0,0,0,.5))}
+.tile-card.floating-tile:hover{filter:drop-shadow(0 26px 44px rgba(186,104,200,.34)) drop-shadow(0 20px 34px rgba(0,0,0,.58))}
+.tile-card.route-tile{width:120px}
+.tile-card.normal-tile{width:195px}
+.tile-card.small-tile{width:110px}
+.tile-card.route-tile .tile-svg-area{height:120px;aspect-ratio:auto}
+.tile-card.normal-tile .tile-svg-area{height:195px;aspect-ratio:auto}
+.tile-card.small-tile .tile-svg-area{height:110px;aspect-ratio:auto}
+
+.tile-svg-area{
+  width:100%;aspect-ratio:1;display:block;
+  position:relative;overflow:visible;
+  border-radius:2px;
+}
+.tile-svg-area svg{width:100%;height:100%;display:block;overflow:hidden}
+
+.tile-footer{
+  padding:8px 4px 2px;
+  text-shadow:0 1px 8px rgba(0,0,0,.8);
+}
+.tile-toponym{
+  font-size:11px;font-weight:700;color:#eef4ff;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;letter-spacing:.03em;
+}
+.tile-page{font-size:9px;color:rgba(212,212,232,.55);margin-top:2px}
+.tile-badge{
+  display:inline-block;font-size:8px;letter-spacing:.1em;text-transform:uppercase;
+  padding:2px 6px;border-radius:3px;margin-top:5px;border:1px solid;
+  background:rgba(4,6,14,.34);
+  box-shadow:inset 0 0 12px rgba(255,255,255,.03);
+}
+.scene-agent-badge{
+  position:absolute;top:-24px;right:0;z-index:4;
+  display:flex;align-items:center;gap:5px;max-width:210px;
+  color:rgba(226,232,242,.82);font-size:9px;font-weight:700;line-height:1.1;
+  text-shadow:0 1px 8px rgba(0,0,0,.9);white-space:nowrap;
+  overflow:hidden;text-overflow:ellipsis;pointer-events:none;
+}
+.scene-agent-badge svg{width:13px;height:13px;flex:0 0 auto;stroke:rgba(226,232,242,.78)}
+.scene-agent-badge span{min-width:0;overflow:hidden;text-overflow:ellipsis}
+.small-tile .scene-agent-badge{font-size:8px;top:-20px;max-width:150px}
+.route-tile .scene-agent-badge{font-size:8px;top:-21px;max-width:170px}
+
+/* INFO PANEL */
+#info-panel{
+  position:absolute;right:0;top:0;bottom:0;width:320px;
+  background:rgba(5,5,14,.98);border-left:1px solid var(--border);
+  z-index:600;transform:translateX(100%);
+  overflow-y:auto;pointer-events:auto;
+}
+#info-close{
+  position:absolute;top:14px;right:16px;
+  background:none;border:1px solid var(--border);color:var(--dim);
+  width:28px;height:28px;border-radius:50%;cursor:pointer;font-size:14px;
+  display:flex;align-items:center;justify-content:center;transition:all .2s;
+}
+#info-close:hover{border-color:var(--text);color:var(--text)}
+.info-body{padding:20px}
+.info-toponym{font-size:20px;font-weight:700;color:#fff;margin-bottom:4px;padding-right:36px;line-height:1.2}
+.info-place-id{font-size:10px;color:var(--dim);letter-spacing:.1em;margin-bottom:16px;font-family:'Courier New',monospace}
+.info-excerpt{
+  font-size:12px;line-height:1.75;color:var(--text);font-style:italic;
+  border-left:2px solid rgba(255,255,255,0.15);padding-left:12px;margin-bottom:20px;
+}
+.info-excerpt strong{font-style:normal;color:#fff}
+.info-divider{height:1px;background:var(--border);margin:14px 0}
+.info-section-label{font-size:9px;letter-spacing:.15em;text-transform:uppercase;color:var(--dim);margin-bottom:10px}
+.info-meta-grid{display:grid;grid-template-columns:auto 1fr;gap:6px 14px;font-size:11px}
+.info-meta-key{color:var(--dim);text-transform:uppercase;letter-spacing:.1em;font-size:9px;padding-top:1px}
+.info-meta-val{color:var(--text)}
+.info-badge{display:inline-block;padding:2px 8px;border-radius:3px;font-size:10px;font-weight:600;border:1px solid}
+.vis-legend{display:flex;flex-direction:column;gap:8px}
+.vis-row{display:flex;align-items:center;gap:10px;font-size:11px}
+.swatch-dot{width:12px;height:12px;border-radius:50%;flex-shrink:0}
+.swatch-line{width:28px;height:2px;flex-shrink:0}
+
+/* CONTROLS */
+#controls{
+  position:absolute;bottom:12px;left:50%;transform:translateX(-50%);
+  z-index:700;display:flex;gap:14px;
+}
+.ctrl-btn{
+  background:rgba(8,8,20,.9);border:1px solid rgba(255,255,255,.22);
+  color:#fff;padding:11px 22px;font-size:11px;letter-spacing:.12em;
+  text-transform:uppercase;cursor:pointer;border-radius:4px;
+  backdrop-filter:blur(8px);transition:all .2s;white-space:nowrap;
+}
+.ctrl-btn:hover{background:rgba(20,20,40,.95);border-color:rgba(255,255,255,.4)}
+.ctrl-btn.char-btn{border-color:rgba(79,195,247,.4)}
+.ctrl-btn.char-btn:hover{border-color:var(--c-marker)}
+.ctrl-btn.scene-btn{border-color:rgba(129,196,132,.4)}
+.ctrl-btn.scene-btn:hover{border-color:var(--c-route)}
+.ctrl-btn.map-btn{border-color:rgba(255,255,255,.2)}
+.ctrl-btn.map-btn:hover{border-color:rgba(255,255,255,.5)}
+.ctrl-btn.active{background:rgba(22,22,48,.98)!important;border-color:rgba(255,255,255,.55)!important}
+.ctrl-btn.char-btn.active{border-color:var(--c-marker)!important}
+.ctrl-btn.scene-btn.active{border-color:var(--c-route)!important}
+
+/* STORY PANEL */
+#story-panel{
+  position:absolute;top:24px;left:20px;z-index:720;
+  width:min(390px,calc(100vw - 40px));max-height:calc(100% - 124px);
+  display:grid;grid-template-columns:34px 1fr;gap:16px;
+  background:rgba(248,245,240,.95);color:#201d1d;
+  border:1px solid rgba(255,255,255,.16);border-radius:8px;
+  box-shadow:0 18px 46px rgba(0,0,0,.38);
+  backdrop-filter:blur(12px);overflow:hidden;
+  transition:width .45s ease,max-height .45s ease,grid-template-columns .45s ease,
+    gap .45s ease,background .45s ease,border-color .45s ease,
+    box-shadow .45s ease,transform .45s ease;
+}
+.story-rail{
+  position:relative;display:flex;justify-content:center;padding:24px 0;
+  background:linear-gradient(180deg,rgba(255,255,255,.5),rgba(255,255,255,.12));
+  transition:opacity .28s ease,padding .45s ease;
+}
+.story-rail::before{
+  content:"";position:absolute;top:29px;bottom:29px;width:2px;
+  background:rgba(9,21,38,.12);
+}
+.story-dot{
+  position:relative;width:15px;height:15px;border-radius:50%;
+  background:#a82535;box-shadow:0 0 0 5px rgba(168,37,53,.08);
+}
+.story-body{
+  min-width:0;overflow-y:auto;padding:24px 22px 24px 0;
+  scrollbar-color:rgba(32,29,29,.24) transparent;
+  transition:padding .45s ease,overflow .45s ease;
+}
+.story-kicker{
+  font:700 12px/1.2 'Courier New',monospace;letter-spacing:.24em;
+  text-transform:uppercase;color:#a82535;margin-bottom:22px;
+  transition:opacity .25s ease,max-height .35s ease,margin .35s ease;
+}
+.story-title{
+  font-family:Georgia,'Times New Roman',serif;font-size:28px;line-height:1.05;
+  color:#191717;margin-bottom:18px;letter-spacing:0;
+  transition:font-size .45s ease,color .45s ease,margin .45s ease,font-family .45s ease,
+    letter-spacing .45s ease,text-transform .45s ease;
+}
+.story-copy{
+  font-family:Georgia,'Times New Roman',serif;font-size:16px;line-height:1.62;
+  color:#403b3b;
+  transition:opacity .25s ease,max-height .35s ease,margin .35s ease;
+}
+.story-progress{
+  display:flex;align-items:center;gap:9px;margin-top:22px;
+  color:#74706f;font:700 11px/1 'Courier New',monospace;letter-spacing:.12em;
+  text-transform:uppercase;
+  transition:opacity .25s ease,max-height .35s ease,margin .35s ease;
+}
+.story-progress::before{
+  content:"";display:block;width:36px;height:2px;background:#a82535;
+}
+#app.exploring #story-panel{
+  width:160px;max-height:48px;grid-template-columns:0 1fr;gap:0;
+  background:rgba(8,8,20,.92);border-color:rgba(255,255,255,.18);
+  box-shadow:0 12px 30px rgba(0,0,0,.34);
+}
+#app.exploring .story-rail{
+  opacity:0;padding:0;pointer-events:none;
+}
+#app.exploring .story-body{
+  padding:13px 16px;overflow:hidden;
+}
+#app.exploring .story-kicker,
+#app.exploring .story-copy,
+#app.exploring .story-progress{
+  opacity:0;max-height:0;margin:0;overflow:hidden;
+}
+#app.exploring .story-title{
+  font-family:'Helvetica Neue',Arial,sans-serif;font-size:12px;line-height:1;
+  margin:0;color:#eef4ff;letter-spacing:.16em;text-transform:uppercase;
+  white-space:nowrap;
+}
+
+/* LEGEND */
+#legend{
+  position:absolute;top:24px;right:20px;z-index:700;
+  width:330px;max-height:calc(100% - 128px);overflow-y:auto;
+  background:rgba(5,16,28,.92);border:1px solid rgba(255,255,255,.08);
+  border-radius:8px;padding:17px 18px 20px;backdrop-filter:blur(12px);
+  box-shadow:0 18px 46px rgba(0,0,0,.34),inset 0 0 34px rgba(79,195,247,.025);
+  transition:opacity .36s ease,transform .36s ease,visibility .36s ease;
+}
+#app.exploring #legend{
+  opacity:0;transform:translateX(18px);visibility:hidden;pointer-events:none;
+}
+.leg-title{display:none}
+.leg-sec{padding-bottom:17px;margin-bottom:17px;border-bottom:1px solid rgba(255,255,255,.08)}
+.leg-sec:last-child{padding-bottom:0;margin-bottom:0;border-bottom:0}
+.leg-sec-name{
+  font-size:12px;color:#cdd6e0;letter-spacing:.045em;text-transform:uppercase;
+  margin-bottom:14px;font-weight:800;text-shadow:0 1px 10px rgba(0,0,0,.7);
+}
+.leg-item{
+  display:grid;grid-template-columns:88px 1fr;align-items:center;gap:14px;
+  min-height:33px;font-size:13px;font-weight:700;line-height:1.32;
+  color:#c9d0db;margin-bottom:9px;text-shadow:0 1px 8px rgba(0,0,0,.86);
+}
+.leg-icon{width:72px;height:33px;display:flex;align-items:center;justify-content:center;flex-shrink:0}
+.leg-icon svg{display:block;overflow:visible}
+.leg-line{width:72px;height:3px;border-radius:2px;box-shadow:0 0 8px currentColor}
+.leg-text strong{color:#e7edf7;font-weight:800}
+.leg-note{font-weight:700;color:#b2bac7}
+.texture-sample{
+  width:34px;height:34px;border:2px solid rgba(210,215,220,.62);border-radius:4px;
+  background-color:rgba(217,223,228,.08);box-shadow:inset 0 0 12px rgba(255,255,255,.05);
+}
+.texture-precise{
+  background-image:
+    linear-gradient(45deg,rgba(255,255,255,.14) 1px,transparent 1px),
+    linear-gradient(-45deg,rgba(255,255,255,.12) 1px,transparent 1px),
+    linear-gradient(90deg,rgba(79,195,247,.14) 1px,transparent 1px);
+  background-size:9px 9px,12px 12px,7px 7px;
+}
+.texture-approximate{
+  opacity:.76;
+  background-image:
+    linear-gradient(45deg,rgba(255,255,255,.09) 1px,transparent 1px),
+    linear-gradient(90deg,rgba(255,255,255,.08) 1px,transparent 1px);
+  background-size:11px 11px,8px 8px;
+  filter:blur(.35px);
+}
+.texture-relative{
+  opacity:.68;
+  background-image:
+    radial-gradient(circle at 50% 50%,rgba(255,255,255,.18) 0 1px,transparent 1px),
+    linear-gradient(30deg,rgba(255,255,255,.08) 1px,transparent 1px);
+  background-size:10px 10px,13px 13px;
+}
+.texture-indeterminate{
+  opacity:.72;
+  background-image:radial-gradient(circle at 50% 50%,rgba(255,255,255,.28) 0 1.4px,transparent 1.8px);
+  background-size:34px 34px;
+}
+
+/* TOAST */
+#toast{
+  position:absolute;bottom:80px;left:50%;transform:translateX(-50%);
+  background:rgba(8,8,20,.92);border:1px solid var(--border);
+  color:var(--text);font-size:11px;padding:8px 18px;border-radius:20px;
+  z-index:800;opacity:0;pointer-events:none;letter-spacing:.06em;white-space:nowrap;
+}
+
+/* FLYING CLONE */
+.tile-clone{position:fixed;z-index:1200;pointer-events:none}
+.tile-clone svg{width:100%;height:100%;display:block;overflow:visible}
+
+/* LEAFLET */
+.leaflet-container{background:var(--bg)!important}
+.leaflet-control-attribution{background:rgba(5,5,12,.8)!important;color:rgba(255,255,255,.3)!important;font-size:9px!important}
+.leaflet-control-attribution a{color:rgba(255,255,255,.4)!important}
+.leaflet-control-zoom{display:none!important}
+::-webkit-scrollbar{width:4px}
+::-webkit-scrollbar-thumb{background:rgba(255,255,255,.1);border-radius:2px}
+@media (max-width:980px){
+  #app{display:grid;grid-template-rows:auto 1fr auto}
+  #story-panel{
+    top:16px;left:14px;right:14px;width:auto;max-height:164px;
+    grid-template-columns:34px minmax(132px,180px) 1fr;gap:18px;
+    align-items:center;
+  }
+  .story-rail{padding:18px 0;align-self:stretch}
+  .story-body{
+    display:grid;grid-template-columns:minmax(132px,180px) minmax(0,1fr);
+    gap:18px;align-items:center;padding:18px 22px 18px 0;
+    grid-column:2/4;
+  }
+  .story-kicker{grid-column:1;align-self:start;margin-bottom:0}
+  .story-title{grid-column:1;font-size:28px;margin:24px 0 0}
+  .story-copy{
+    grid-column:2;grid-row:1/3;max-height:104px;overflow-y:auto;
+    font-size:15px;line-height:1.45;padding-right:10px;
+  }
+  .story-progress{display:none}
+  #controls{
+    bottom:180px;width:min(720px,calc(100vw - 28px));justify-content:space-between;
+    gap:10px;padding:0 4px;
+  }
+  .ctrl-btn{flex:1;padding:11px 10px;font-size:10px;min-width:0}
+  #legend{
+    top:auto;left:0;right:0;bottom:0;width:auto;max-height:166px;
+    display:grid;grid-template-columns:repeat(3,minmax(240px,1fr));gap:14px;
+    overflow-x:auto;overflow-y:hidden;border-radius:0;padding:12px 16px;
+    border-left:0;border-right:0;border-bottom:0;
+  }
+  .leg-sec{min-width:240px;padding:0;margin:0;border-bottom:0}
+  .leg-sec-name{font-size:9px;margin-bottom:8px}
+  .leg-item{grid-template-columns:58px 1fr;gap:8px;min-height:24px;font-size:9px;margin-bottom:5px}
+  .leg-icon{width:52px;height:24px}.leg-icon svg{max-width:52px;max-height:24px}
+  .leg-line{width:52px;height:2px}
+  .texture-sample{width:26px;height:26px}
+
+  #app.exploring #story-panel{
+    top:22px;left:20px;right:auto;width:218px;max-height:68px;
+    grid-template-columns:0 1fr;gap:0;background:rgba(8,8,20,.92);
+  }
+  #app.exploring .story-body{display:block;padding:18px 24px}
+  #app.exploring .story-title{font-size:28px;letter-spacing:0;text-transform:none}
+  #app.exploring #explore-overlay{
+    padding:20px 20px 86px;align-items:flex-start;justify-content:flex-end;
+  }
+  #app.exploring.info-open #explore-overlay{padding-bottom:252px}
+  #app.exploring #explore-inner{width:min(900px,calc(100vw - 40px));align-items:flex-end}
+  #app.exploring .view-header{text-align:right;margin:0 0 108px auto}
+  #app.exploring .view-label{font-size:10px;color:#d7d9e2;margin-bottom:6px}
+  #app.exploring .view-title{font-size:30px;font-weight:400}
+  #app.exploring #char-grid,
+  #app.exploring #scene-grid{align-self:center}
+  #app.exploring #controls{
+    bottom:0;width:100%;gap:0;padding:0;transition:bottom .38s ease;
+  }
+  #app.exploring.info-open #controls{bottom:190px}
+  #app.exploring .ctrl-btn{
+    border-radius:0;padding:18px 10px;font-size:12px;letter-spacing:.14em;
+    background:rgba(8,8,20,.94);
+  }
+
+  #info-panel{
+    left:0;right:0;top:auto;bottom:0;width:100%;height:190px;
+    border-left:0;border-top:1px solid rgba(255,255,255,.22);
+    overflow-x:auto;overflow-y:hidden;
+  }
+  .info-body{
+    min-width:930px;height:100%;padding:14px 44px 14px 66px;
+    display:grid;grid-template-columns:210px 280px 220px 240px;
+    grid-template-rows:auto auto;gap:5px 22px;align-items:start;align-content:start;
+  }
+  .info-toponym{font-size:19px;margin:24px 0 0;padding-right:0;line-height:1.14}
+  .info-place-id{grid-column:1;font-size:9px;margin-top:0}
+  .info-excerpt{grid-column:2;grid-row:1/3;max-height:142px;overflow-y:auto;margin:0}
+  .info-divider{display:none}
+  .info-section-label{font-size:10px;margin:0}
+  .info-body > .info-section-label:nth-of-type(5){grid-column:3;grid-row:1}
+  .info-body > .info-section-label:nth-of-type(8){grid-column:4;grid-row:1}
+  .info-meta-grid{grid-column:3;grid-row:2;grid-template-columns:auto 1fr;gap:6px 10px;align-self:start}
+  #info-meta{grid-column:3;align-self:start}
+  #info-vis{grid-column:4;grid-row:2;align-self:start;gap:6px}
+  #info-close{
+    position:fixed;top:auto;bottom:140px;left:14px;right:auto;z-index:3500;
+    width:38px;height:38px;margin:0;background:rgba(124,139,150,.94);
+    border:0;color:#fff;
+  }
+  #app:not(.info-open) #info-close{visibility:hidden;pointer-events:none}
+  #toast{
+    top:190px;bottom:auto;left:24px;transform:none;
+    z-index:1200;max-width:calc(100vw - 32px);white-space:nowrap;
+  }
+  #app.exploring #toast{top:90px;left:20px}
+  #toast[style]{transform:none!important}
+}
+@media (max-width:620px){
+  #navbar{padding:0 14px}
+  #navbar .sub,.chapter{display:none}
+  #story-panel{top:12px;left:10px;right:10px;grid-template-columns:24px 108px 1fr;gap:10px;max-height:150px}
+  .story-body{grid-template-columns:108px minmax(0,1fr);gap:12px;padding:14px 14px 14px 0}
+  .story-kicker{font-size:10px}
+  .story-title{font-size:22px;margin-top:20px}
+  .story-copy{font-size:13px;line-height:1.38;max-height:96px}
+  #controls{bottom:170px;width:calc(100vw - 16px);gap:6px}
+  .ctrl-btn{font-size:9px;padding:10px 6px;letter-spacing:.08em}
+  #legend{max-height:156px;padding:10px;grid-template-columns:repeat(3,minmax(220px,1fr))}
+  .leg-sec{min-width:220px}
+  #app.exploring #story-panel{width:188px;max-height:60px}
+  #app.exploring .story-body{padding:15px 18px}
+  #app.exploring .story-title{font-size:24px}
+  #app.exploring #explore-overlay{padding:16px 10px 78px}
+  #app.exploring.info-open #explore-overlay{padding-bottom:238px}
+  #app.exploring .view-header{margin-bottom:84px}
+  #app.exploring .view-title{font-size:24px}
+  #app.exploring #explore-inner{width:100%;align-items:center}
+  #char-grid{grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;width:100%;max-width:none}
+  #char-grid .row2{grid-column:1/-1;display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;justify-content:stretch}
+  .tile-card.normal-tile{width:min(29vw,118px)}
+  .tile-card.normal-tile .tile-svg-area{height:min(29vw,118px)}
+  #scene-grid{
+    grid-template-columns:repeat(3,minmax(0,1fr));
+    grid-template-areas:
+      "route route route"
+      "set1 set2 set3"
+      "set4 set5 sgv"
+      "prj . .";
+    gap:14px;width:100%;max-width:none;
+  }
+  .route-row{overflow:visible;justify-content:space-between;padding-top:18px}
+  .route-arr{padding:0 2px}
+  .route-arr svg{width:22px}
+  .tile-card.route-tile{width:min(27vw,104px)}
+  .tile-card.route-tile .tile-svg-area{height:min(27vw,104px)}
+  .tile-card.small-tile{width:min(27vw,104px)}
+  .tile-card.small-tile .tile-svg-area{height:min(27vw,104px)}
+  #app.exploring #controls{bottom:0;width:100%;gap:0;padding:0}
+  #app.exploring.info-open #controls{bottom:190px}
+  #app.exploring .ctrl-btn{border-radius:0;font-size:11px;padding:16px 8px}
+  .info-body{min-width:820px;grid-template-columns:176px 246px 190px 208px;gap:5px 18px;padding-left:60px}
+  .info-toponym{font-size:18px;margin-top:22px}
+  .info-excerpt{max-height:136px}
+  #info-close{bottom:140px;left:12px}
+  #toast{top:166px;left:16px}
+  #app.exploring #toast{top:78px;left:14px}
+}
+</style>
+</head>
+<body>
+
+<nav id="navbar">
+  <div class="brand">
+    <div class="dot"></div>
+    <span class="name">GaddAtlas</span>
+    <span class="sub">Visualizzazione della spazialità narrativa</span>
+  </div>
+  <span class="chapter">C. E. Gadda — Quer Pasticciaccio brutto de via Merulana — Capitolo I</span>
+</nav>
+
+<div id="app">
+  <div id="map-wrap">
+    <div id="map"></div>
+    <div id="map-dimmer"></div>
+  </div>
+
+  <!-- Overlay centrato sulla mappa -->
+  <div id="explore-overlay">
+    <div id="explore-inner">
+      <!-- Contenuto iniettato dinamicamente -->
+    </div>
+  </div>
+
+  <!-- Info panel -->
+  <div id="info-panel">
+    <div class="info-body">
+      <div class="info-toponym"  id="info-toponym"></div>
+      <div class="info-place-id" id="info-place-id"></div>
+      <div class="info-excerpt"  id="info-excerpt"></div>
+      <div class="info-divider"></div>
+      <div class="info-section-label">Metadati narrativi</div>
+      <div class="info-meta-grid" id="info-meta"></div>
+      <div class="info-divider"></div>
+      <div class="info-section-label">Legenda visuale</div>
+      <div class="vis-legend" id="info-vis"></div>
+    </div>
+    <button id="info-close">×</button>
+  </div>
+
+  <!-- Scrollytelling -->
+  <aside id="story-panel" aria-label="Scrollytelling dei capitoli">
+    <div class="story-rail" aria-hidden="true">
+      <div class="story-dot"></div>
+    </div>
+    <div class="story-body">
+      <div class="story-kicker">Cap. I</div>
+      <h1 class="story-title">Capitolo I</h1>
+      <p class="story-copy">Nel primo capitolo del Pasticciaccio, il commissario Ingravallo entra nel mondo di via Merulana attraverso il pranzo in casa Balducci, dove emergono la figura enigmatica di Liliana, il tema della maternità mancata e la rete ambigua di relazioni familiari, domestiche e desideranti che attraversa l’appartamento. Poco dopo, nello stesso palazzo, il furto ai danni della contessa Menegazzi avvia la prima indagine: testimonianze, sospetti, tracce materiali e interrogatori ricompongono il delitto come un sistema instabile di voci e possibilità. Fin dall’inizio, Roma non è soltanto lo sfondo dell’azione, ma uno spazio stratificato e corale, in cui il caso poliziesco diventa una forma di esplorazione della complessità del reale.</p>
+      <div class="story-progress">Prototipo</div>
+    </div>
+  </aside>
+
+  <!-- Legenda -->
+  <div id="legend">
+    <div class="leg-title">Legenda</div>
+    <div class="leg-sec">
+      <div class="leg-sec-name">Statuto di realtà (forma)</div>
+      <div class="leg-item">
+        <div class="leg-icon" aria-hidden="true">
+          <svg width="58" height="32" viewBox="0 0 58 32"><polygon points="29,2 53,14 53,28 29,30 5,19 7,8" fill="none" stroke="#aeb5bf" stroke-width="2.2"/></svg>
+        </div>
+        <div class="leg-text"><strong>Imported</strong> <span class="leg-note">(reale)</span></div>
+      </div>
+      <div class="leg-item">
+        <div class="leg-icon" aria-hidden="true">
+          <svg width="58" height="32" viewBox="0 0 58 32"><path d="M8 11 L21 3 L42 5 L53 14 L49 26 L31 30 L12 25 L4 18 Z" fill="none" stroke="#aeb5bf" stroke-width="2.2" stroke-linejoin="round"/></svg>
+        </div>
+        <div class="leg-text"><strong>Transformed</strong> <span class="leg-note">(narrativo)</span></div>
+      </div>
+      <div class="leg-item">
+        <div class="leg-icon" aria-hidden="true">
+          <svg width="58" height="32" viewBox="0 0 58 32"><path d="M9 10 L20 4 L38 4 L50 12 L52 23 L40 29 L20 29 L7 22 Z" fill="none" stroke="#aeb5bf" stroke-width="2.2" stroke-linejoin="round" stroke-dasharray="6 3"/></svg>
+        </div>
+        <div class="leg-text"><strong>Imagined</strong> <span class="leg-note">(immaginato)</span></div>
+      </div>
+      <div class="leg-item">
+        <div class="leg-icon" aria-hidden="true">
+          <svg width="58" height="32" viewBox="0 0 58 32"><path d="M9 12 L18 5 L37 5 L49 13 L53 22 L42 29 L21 28 L7 22 Z" fill="none" stroke="#aeb5bf" stroke-width="2.2" stroke-linejoin="round" stroke-dasharray="3 4"/></svg>
+        </div>
+        <div class="leg-text"><strong>Invented</strong> <span class="leg-note">(inventato)</span></div>
+      </div>
+    </div>
+    <div class="leg-sec">
+      <div class="leg-sec-name">Ruolo narrativo (colore del bordo)</div>
+      <div class="leg-item"><div class="leg-icon"><div class="leg-line" style="color:var(--c-setting);background:var(--c-setting)"></div></div><div class="leg-text"><strong>Setting</strong> <span class="leg-note">(luogo centrale dell'azione)</span></div></div>
+      <div class="leg-item"><div class="leg-icon"><div class="leg-line" style="color:var(--c-marker);background:var(--c-marker)"></div></div><div class="leg-text"><strong>Marker</strong> <span class="leg-note">(luogo di ambientazione)</span></div></div>
+      <div class="leg-item"><div class="leg-icon"><div class="leg-line" style="color:var(--c-project);background:var(--c-project)"></div></div><div class="leg-text"><strong>ProjectedSpace</strong> <span class="leg-note">(luogo immaginato, sognato, desiderato, ricordato)</span></div></div>
+      <div class="leg-item"><div class="leg-icon"><div class="leg-line" style="color:var(--c-route);background:repeating-linear-gradient(90deg,var(--c-route) 0 14px,transparent 14px 24px)"></div></div><div class="leg-text"><strong>Route</strong> <span class="leg-note">(tragitto che unisce più luoghi)</span></div></div>
+      <div class="leg-item"><div class="leg-icon"><div class="leg-line" style="color:#f2b52b;background:repeating-linear-gradient(90deg,#f2b52b 0 14px,transparent 14px 24px)"></div></div><div class="leg-text"><strong>ZoneOfAction</strong> <span class="leg-note">(area omogenea di luoghi)</span></div></div>
+    </div>
+    <div class="leg-sec">
+      <div class="leg-sec-name">Determinazione spaziale (texture)</div>
+      <div class="leg-item"><div class="leg-icon"><div class="texture-sample texture-precise"></div></div><div class="leg-text"><strong>Precise</strong> <span class="leg-note">(mappa nitida)</span></div></div>
+      <div class="leg-item"><div class="leg-icon"><div class="texture-sample texture-approximate"></div></div><div class="leg-text"><strong>Approximate</strong> <span class="leg-note">(mappa attenuata)</span></div></div>
+      <div class="leg-item"><div class="leg-icon"><div class="texture-sample texture-relative"></div></div><div class="leg-text"><strong>Relative</strong> <span class="leg-note">(mappa schematica)</span></div></div>
+      <div class="leg-item"><div class="leg-icon"><div class="texture-sample texture-indeterminate"></div></div><div class="leg-text"><strong>Indeterminate</strong> <span class="leg-note">(mappa astratta)</span></div></div>
+    </div>
+  </div>
+
+  <!-- Controlli -->
+  <div id="controls">
+    <button class="ctrl-btn map-btn active" id="btn-map">↑ Mappa</button>
+    <button class="ctrl-btn char-btn" id="btn-char">Personaggio: Ingravallo</button>
+    <button class="ctrl-btn scene-btn" id="btn-scene">Scena: Capitolo I</button>
+  </div>
+
+  <div id="toast"></div>
+</div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/d3@7/dist/d3.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.12.2/dist/gsap.min.js"></script>
+
+<!-- ═══════════════ DATA ═══════════════ -->
+<script>
+const GAZ_ALL=[{"id":"gaz_acqua_pia_antica_marcia","name":"Acqua Pia Antica Marcia","lat":41.846730729923955,"lng":12.563362579004666},{"id":"gaz_albano_laziale","name":"Albano Laziale","lat":41.72979996535707,"lng":12.659200477592739},{"id":"gaz_aliciaro","name":"Aliciaro","lat":41.90594993508033,"lng":12.477286809814073},{"id":"gaz_aniene","name":"Aniene","lat":41.94603890927569,"lng":12.501546645468759},{"id":"gaz_aventino","name":"Aventino","lat":41.88336622181254,"lng":12.477783109311511},{"id":"gaz_banca_commerciale_italiana","name":"Banca Commerciale Italiana","lat":41.900490491252384,"lng":12.48081919655661},{"id":"gaz_banca_ditalia","name":"Banca d'Italia","lat":41.89761872488606,"lng":12.488825693999917},{"id":"gaz_banco_di_santo_spirito","name":"Banco di Santo Spirito","lat":41.899845023885185,"lng":12.466807906113214},{"id":"gaz_bologna","name":"Bologna","lat":44.49555555061309,"lng":11.344545396805216},{"id":"gaz_borgo_pio","name":"Borgo Pio","lat":41.90386486389618,"lng":12.460347994271636},{"id":"gaz_borgo_vecchio","name":"Borgo Vecchio","lat":41.90228400646402,"lng":12.460641676910392},{"id":"gaz_bottaro","name":"Bottaro","lat":41.90898217045761,"lng":12.474387506407567},{"id":"gaz_buco_a_santignazio","name":"Buco a Sant'Ignazio","lat":41.89789137306835,"lng":12.479623019314188},{"id":"gaz_ca_francesi","name":"Ca' Francesi","lat":41.78727080105131,"lng":12.619658543302705},{"id":"gaz_campo_de_fiori","name":"Campo de' Fiori","lat":41.89561400555795,"lng":12.472176145219677},{"id":"gaz_campo_marzio","name":"Campo Marzio","lat":41.642728096089805,"lng":12.648434711443402},{"id":"gaz_campo_verano","name":"Campo Verano","lat":41.90880699529367,"lng":12.516541913540283},{"id":"gaz_campoleone","name":"Campoleone","lat":41.66168711520551,"lng":12.520319957671276},{"id":"gaz_cecchina","name":"Cecchina","lat":41.69302437483999,"lng":12.649648693210247},{"id":"gaz_celio","name":"Celio","lat":41.88727982359032,"lng":12.497441089867237},{"id":"gaz_ciampino","name":"Ciampino","lat":41.80425628012242,"lng":12.599503897985613},{"id":"gaz_collegio_romano","name":"Collegio Romano","lat":41.89763081118981,"lng":12.479479456273962},{"id":"gaz_colosseo","name":"Colosseo","lat":41.89035225098585,"lng":12.49219290392497},{"id":"gaz_corso_umberto","name":"Corso Umberto","lat":41.90323194218181,"lng":12.479507636411158},{"id":"gaz_dazeglio","name":"D'Azeglio","lat":41.90013088374668,"lng":12.49926878303822},{"id":"gaz_dosso_faiti","name":"Dosso Faiti","lat":45.884990244121546,"lng":13.649815236363924},{"id":"gaz_due_santi","name":"Due Santi","lat":45.4369739,"lng":12.3363372},{"id":"gaz_esquilino","name":"Esquilino","lat":41.893298797354646,"lng":12.505248214532827},{"id":"gaz_filettino","name":"Filettino","lat":41.89068987779071,"lng":13.324876181760342},{"id":"gaz_fontanella_della_scrofa","name":"Fontanella della Scrofa","lat":41.90164982576232,"lng":12.474936661874011},{"id":"gaz_fontanella_di_borghese","name":"Fontanella di Borghese","lat":41.90416313558839,"lng":12.478029650740126},{"id":"gaz_foro_italico","name":"Foro Italico","lat":41.93253953174582,"lng":12.457198145871402},{"id":"gaz_forte_de_marmi","name":"Forte de' Marmi","lat":43.959501773243005,"lng":10.168916830510227},{"id":"gaz_frattocchie","name":"Frattocchie","lat":41.766863233033725,"lng":12.616317604540413},{"id":"gaz_galleria_colonna","name":"Galleria Colonna","lat":41.89761875811568,"lng":12.484745365682299},{"id":"gaz_genova","name":"Genova","lat":44.40813562461099,"lng":8.93119220339372},{"id":"gaz_gianicolo","name":"Gianicolo","lat":41.89772036230625,"lng":12.461430554962151},{"id":"gaz_istituto_dellenciclopedia_treccani","name":"Istituto dell'Enciclopedia Treccani","lat":41.89437602767189,"lng":12.477499531045337},{"id":"gaz_largo_brancaccio","name":"Largo Brancaccio","lat":41.89499585680336,"lng":12.49962004376294},{"id":"gaz_lungara","name":"Lungara","lat":41.895619950406626,"lng":12.464523776824885},{"id":"gaz_lungotevere_prati","name":"Lungotevere Prati","lat":41.904888384947654,"lng":12.472885100933542},{"id":"gaz_maccheronaro","name":"Maccheronaro","lat":41.895619950406626,"lng":12.456523776824885},{"id":"gaz_marino","name":"Marino","lat":41.7769739,"lng":12.6563372},{"id":"gaz_milano","name":"Milano","lat":45.46417984291975,"lng":9.188743384040578},{"id":"gaz_molo_beverello","name":"Molo Beverello","lat":40.83845747697102,"lng":14.25512089831604},{"id":"gaz_monte_cengio","name":"Monte Cengio","lat":45.83464690564686,"lng":11.395},{"id":"gaz_monte_manno","name":"Monte Manno","lat":41.70507314535531,"lng":12.933066487462337},{"id":"gaz_monte_matese","name":"Monte Matese","lat":41.451044369853264,"lng":14.366554255055233},{"id":"gaz_ostia","name":"Ostia","lat":41.73245855250897,"lng":12.278829513185713},{"id":"gaz_padova","name":"Padova","lat":45.40750149300311,"lng":11.873753041768424},{"id":"gaz_palazzo","name":"Palazzo","lat":41.893619950406626,"lng":12.470523776824885},{"id":"gaz_palazzo_chigi","name":"Palazzo Chigi","lat":41.89683405457504,"lng":12.478706693556006},{"id":"gaz_palazzo_pio","name":"Palazzo Pio","lat":41.89183405457504,"lng":12.471706693556006},{"id":"gaz_palazzo_ruspoli","name":"Palazzo Ruspoli","lat":41.89983405457504,"lng":12.482706693556006},{"id":"gaz_palazzo_simonetti","name":"Palazzo Simonetti","lat":41.71799629809183,"lng":12.597231861624314},{"id":"gaz_palestrina","name":"Palestrina","lat":41.83422291934301,"lng":12.888132917750513},{"id":"gaz_pantheon","name":"Pantheon","lat":41.89854629809183,"lng":12.476731861624314},{"id":"gaz_pavona","name":"Pavona","lat":41.641231749714924,"lng":12.519817410597319},{"id":"gaz_pensione_burgess","name":"Pensione Burgess","lat":41.911231749714924,"lng":12.483817410597319},{"id":"gaz_piazza_colonna","name":"Piazza Colonna","lat":41.901231749714924,"lng":12.480817410597319},{"id":"gaz_piazza_di_pietra","name":"Piazza di Pietra","lat":41.899231749714924,"lng":12.477817410597319},{"id":"gaz_piazza_di_spagna","name":"Piazza di Spagna","lat":41.905731749714924,"lng":12.482817410597319},{"id":"gaz_piazza_esedra","name":"Piazza Esedra","lat":41.901337427948164,"lng":12.49700785033},{"id":"gaz_piazza_garibaldi","name":"Piazza Garibaldi","lat":41.904291483212205,"lng":12.47872570766404},{"id":"gaz_piazza_montanara","name":"Piazza Montanara","lat":41.887202370701836,"lng":12.478392994101876},{"id":"gaz_piazza_pollarola","name":"Piazza Pollarola","lat":41.89267683406545,"lng":12.473863407009992},{"id":"gaz_piazza_rusticucci","name":"Piazza Rusticucci","lat":41.90353775484286,"lng":12.459192808316081},{"id":"gaz_piazza_san_giovanni","name":"Piazza San Giovanni","lat":41.8855,"lng":12.5053},{"id":"gaz_piazza_san_lorenzo_in_lucina","name":"Piazza San Lorenzo in Lucina","lat":41.90553775484286,"lng":12.473192808316081},{"id":"gaz_piazza_san_pietro","name":"Piazza San Pietro","lat":41.9022608794283,"lng":12.457233173334089},{"id":"gaz_piazza_verdi","name":"Piazza Verdi","lat":41.90653775484286,"lng":12.491192808316081},{"id":"gaz_piazza_vittorio_emanuele","name":"Piazza Vittorio Emanuele","lat":41.895124393144,"lng":12.4988427733034},{"id":"gaz_pincio","name":"Pincio","lat":41.91132024305725,"lng":12.479681647104428},{"id":"gaz_policlinico","name":"Policlinico","lat":41.90088848088894,"lng":12.47993539405843},{"id":"gaz_porta_angelica","name":"Porta Angelica","lat":41.899998191058444,"lng":12.461385384272035},{"id":"gaz_porta_latina","name":"Porta Latina","lat":41.87471279324034,"lng":12.512325564335815},{"id":"gaz_porta_maggiore","name":"Porta Maggiore","lat":41.890472842408514,"lng":12.520321983673056},{"id":"gaz_porta_pinciana","name":"Porta Pinciana","lat":41.91298953301559,"lng":12.489553558380496},{"id":"gaz_pozzo_delle_cornacchie","name":"Pozzo delle Cornacchie","lat":41.89249955749,"lng":12.480250892538322},{"id":"gaz_prati","name":"Prati","lat":41.90875142605531,"lng":12.465194747823828},{"id":"gaz_pratica_di_mare","name":"Pratica di Mare","lat":41.66257061274494,"lng":12.4597582528521},{"id":"gaz_publicii_clivio_de","name":"Publicii clivio de'","lat":41.88342084063378,"lng":12.509173147859243},{"id":"gaz_quattro_cantoni","name":"Quattro Cantoni","lat":41.89142084063378,"lng":12.509173147859243},{"id":"gaz_regina_coeli","name":"Regina Coeli","lat":41.8956176673003,"lng":12.47242775822113},{"id":"gaz_ripetta","name":"Ripetta","lat":41.90861766730038,"lng":12.47742775822113},{"id":"gaz_robine_vecchie","name":"Robine Vecchie","lat":41.919748788718806,"lng":12.494523323289172},{"id":"gaz_rocca_savella","name":"Rocca Savella","lat":41.879124393144066,"lng":12.481842773303407},{"id":"gaz_sacro_cuore","name":"Sacro Cuore","lat":41.9022,"lng":12.4975},{"id":"gaz_san_callisto","name":"San Callisto","lat":41.886124393144066,"lng":12.471842773303407},{"id":"gaz_san_camillo","name":"San Camillo","lat":41.902124393144066,"lng":12.512842773303407},{"id":"gaz_san_carlo_alle_quattro_fontane","name":"San Carlo alle quattro fontane","lat":41.898124393144066,"lng":12.488842773303407},{"id":"gaz_san_clemente","name":"San Clemente","lat":41.889124393144066,"lng":12.502842773303407},{"id":"gaz_san_giovanni","name":"San Giovanni","lat":41.8878,"lng":12.5030},{"id":"gaz_san_giovanni_in_laterano","name":"San Giovanni in Laterano","lat":41.8859,"lng":12.5065},{"id":"gaz_san_lorenzo_al_verano","name":"San Lorenzo al verano","lat":41.91332024305725,"lng":12.509681647104428},{"id":"gaz_san_luigi_de_francesi","name":"San Luigi de' Francesi","lat":41.89932024305725,"lng":12.472681647104428},{"id":"gaz_san_martino_ai_monti","name":"San Martino ai Monti","lat":41.895955929515706,"lng":12.509752710732124},{"id":"gaz_san_silvestro_in_capite","name":"San Silvestro in Capite","lat":41.90289491613001,"lng":12.4807727698506},{"id":"gaz_santa_chiara","name":"Santa Chiara","lat":41.896955929515706,"lng":12.474752710732124},{"id":"gaz_santa_croce_in_gerusalemme","name":"Santa Croce in Gerusalemme","lat":41.887955929515706,"lng":12.516752710732124},{"id":"gaz_santa_margherita_in_abitacolo","name":"Santa Margherita in Abitacolo","lat":41.89267907132654,"lng":12.480113538487586},{"id":"gaz_santa_maria_della_neve","name":"Santa Maria della Neve","lat":41.905955929515706,"lng":12.509752710732124},{"id":"gaz_santa_maria_in_aquiro","name":"Santa Maria in Aquiro","lat":41.87651879334328,"lng":12.502452848902664},{"id":"gaz_santa_maria_in_domnica","name":"Santa Maria in Dòmnica","lat":41.89143521467929,"lng":12.515187147244319},{"id":"gaz_santa_maria_in_porta_paradisi","name":"Santa Maria in Porta Paradisi","lat":41.90946684202862,"lng":12.488381287388847},{"id":"gaz_santa_maria_maggiore","name":"Santa Maria Maggiore","lat":41.89995668376116,"lng":12.500928981958987},{"id":"gaz_santa_maria_sopra_minerva","name":"Santa Maria sopra Minerva","lat":41.89749791950177,"lng":12.475811041946092},{"id":"gaz_santa_palomba","name":"Santa Palomba","lat":41.665497919501774,"lng":12.472811041946092},{"id":"gaz_santa_rita_invitacolo","name":"Santa Rita Invitàcolo","lat":41.89467907132654,"lng":12.476113538487586},{"id":"gaz_santagnese_in_agone","name":"Sant'Agnese in Agone","lat":41.89901971901388,"lng":12.473269808767635},{"id":"gaz_santagostino","name":"Sant'Agostino","lat":41.900850810646595,"lng":12.474278565476274},{"id":"gaz_santandrea_della_valle","name":"Sant'Andrea della Valle","lat":41.894888901388,"lng":12.470969808767635},{"id":"gaz_santanna","name":"Sant'Anna","lat":41.903566260176,"lng":12.457751985167273},{"id":"gaz_santantonio_da_padova","name":"Sant'Antonio da Padova","lat":41.895950310316636,"lng":12.496767872320987},{"id":"gaz_santi_quattro_coronati","name":"Santi Quattro Coronati","lat":41.88867907132654,"lng":12.503113538487586},{"id":"gaz_santo_stefano_del_cacco_celio_santo_stefano","name":"Santo Stefano del Cacco","lat":41.897913228458336,"lng":12.478415528835128},{"id":"gaz_santo_stefano_rotondo","name":"Santo Stefano Rotondo","lat":41.885913228458336,"lng":12.509415528835128},{"id":"gaz_solforata","name":"Solforata","lat":41.659913228458336,"lng":12.463415528835128},{"id":"gaz_suburra","name":"Suburra","lat":41.893913228458336,"lng":12.494415528835128},{"id":"gaz_teatro_jovinelli","name":"Teatro Jovinelli","lat":41.890913228458336,"lng":12.509415528835128},{"id":"gaz_tempio_di_agrippa","name":"Tempio di Agrippa","lat":41.898280857201376,"lng":12.475610092928852},{"id":"gaz_terme_di_caracalla","name":"Terme di Caracalla","lat":41.879638773904546,"lng":12.491970425332556},{"id":"gaz_termini","name":"Termini","lat":41.9001684362405,"lng":12.501622219057022},{"id":"gaz_terracina","name":"Terracina","lat":41.29047601665066,"lng":13.249936342430493},{"id":"gaz_tivoli","name":"Tivoli","lat":41.95975597738329,"lng":12.802413747816448},{"id":"gaz_tor_ser_paolo","name":"Tor Ser Paolo","lat":41.67255587411117,"lng":12.502382758820147},{"id":"gaz_torraccio","name":"Torraccio","lat":41.760346741901486,"lng":12.623648121781372},{"id":"gaz_traforo","name":"Traforo","lat":41.90455587411117,"lng":12.485382758820147},{"id":"gaz_tranvie_dei_castelli","name":"Tranvie dei Castelli","lat":41.77255587411117,"lng":12.582382758820147},{"id":"gaz_vado_ligure","name":"Vado Ligure","lat":44.271040461053644,"lng":8.43855565508531},{"id":"gaz_verona","name":"Verona","lat":45.44286986165943,"lng":10.998439464162914},{"id":"gaz_via_anziate","name":"Via Anziate","lat":41.67255587411117,"lng":12.482382758820147},{"id":"gaz_via_appia","name":"Via Appia","lat":41.85901093505559,"lng":12.510705432845699},{"id":"gaz_via_ardeatina","name":"Via Ardeatina","lat":41.85255492582312,"lng":12.456277927647394},{"id":"gaz_via_boncompagni","name":"Via Boncompagni","lat":41.901863522116905,"lng":12.490746406108268},{"id":"gaz_via_botteghe_oscure","name":"Via Botteghe Oscure","lat":41.893355549833844,"lng":12.476576364372975},{"id":"gaz_via_campo_marzio","name":"Via Campo Marzio","lat":41.90375040110243,"lng":12.476860924843580},{"id":"gaz_via_capo_dafrica","name":"Via Capo d'Africa","lat":41.88375040110243,"lng":12.509860924843580},{"id":"gaz_via_carlo_alberto","name":"Via Carlo Alberto","lat":41.89375040110243,"lng":12.507860924843580},{"id":"gaz_via_colonna_vittoria","name":"Via Colonna Vittoria","lat":41.89299013299084,"lng":12.48262195401995},{"id":"gaz_via_dazeglio","name":"Via D'Azeglio","lat":41.88799013299084,"lng":12.50262195401995},{"id":"gaz_via_de_merli","name":"Via de' Merli","lat":41.88299013299084,"lng":12.510621954019},{"id":"gaz_via_de_querceti","name":"Via de' Querceti","lat":41.89299013299084,"lng":12.512621954019},{"id":"gaz_via_degli_zingari","name":"Via degli Zingari","lat":41.89699013299084,"lng":12.507621954019},{"id":"gaz_via_dei_banchi_vecchi","name":"Via dei Banchi Vecchi","lat":41.89461005150349,"lng":12.468581205893716},{"id":"gaz_via_dei_capocci","name":"Via dei Capocci","lat":41.895621753079465,"lng":12.497719024363650},{"id":"gaz_via_dei_fienili","name":"Via dei Fienili","lat":41.888501650814,"lng":12.481358699278670},{"id":"gaz_via_dei_greci","name":"Via dei Greci","lat":41.90463581534526,"lng":12.477402101018697},{"id":"gaz_via_dei_serpenti","name":"Via dei Serpenti","lat":41.895672704946930,"lng":12.4936157816818},{"id":"gaz_via_del_corso","name":"Via del Corso","lat":41.90439282336764,"lng":12.483517155451212},{"id":"gaz_via_del_gesu","name":"Via del Gesù","lat":41.895860281094386,"lng":12.474549957571031},{"id":"gaz_via_del_gobbo","name":"Via del Gobbo","lat":41.893850810646595,"lng":12.469278565476274},{"id":"gaz_via_del_parlamento","name":"Via del Parlamento","lat":41.90367907132654,"lng":12.476113538487586},{"id":"gaz_via_della_caffarella","name":"Via della Caffarella","lat":41.867402673967856,"lng":12.489442682940714},{"id":"gaz_via_della_navicella","name":"Via della Navicella","lat":41.88479943340214,"lng":12.508684276742391},{"id":"gaz_via_della_palombella","name":"Via della Palombella","lat":41.90161581541604,"lng":12.473158378233190},{"id":"gaz_via_della_scrofa","name":"Via della Scrofa","lat":41.90199474967304,"lng":12.470970515691876},{"id":"gaz_via_delle_coppelle","name":"Via delle Coppelle","lat":41.89979505138305,"lng":12.477713660513266},{"id":"gaz_via_di_ferro","name":"Via di Ferro","lat":41.88781759351706,"lng":12.469902325138259},{"id":"gaz_via_di_grotta_pinta","name":"Via di Grotta Pinta","lat":41.89081759351706,"lng":12.468902325138259},{"id":"gaz_via_di_pietra","name":"Via di Pietra","lat":41.89875033185704,"lng":12.483381577911202},{"id":"gaz_via_di_san_paolo_della_croce","name":"Via di San Paolo della Croce","lat":41.88675033185704,"lng":12.511381577911202},{"id":"gaz_via_di_santo_stefano_rotondo","name":"Via di Santo Stefano Rotondo","lat":41.88575033185704,"lng":12.505381577911202},{"id":"gaz_via_frangipane","name":"Via Frangipane","lat":41.88975033185704,"lng":12.489381577911202},{"id":"gaz_via_labbricana","name":"Via Labbricana","lat":41.884048171682966,"lng":12.507710433733610},{"id":"gaz_via_lanza","name":"Via Lanza","lat":41.89641220677437,"lng":12.498333258746213},{"id":"gaz_via_ludovisi","name":"Via Ludovisi","lat":41.90707297051054,"lng":12.487481602903693},{"id":"gaz_via_mamiani","name":"Via Mamiani","lat":41.88696555883594,"lng":12.498057069655140},{"id":"gaz_via_merulana","name":"Via Merulana","lat":41.8892,"lng":12.5036},{"id":"gaz_via_milano","name":"Via Milano","lat":41.90249880109798,"lng":12.487826656277753},{"id":"gaz_via_monte_caprino","name":"Via Monte Caprino","lat":41.89249880109798,"lng":12.484826656277753},{"id":"gaz_via_montebello","name":"Via Montebello","lat":41.9085647770543,"lng":12.497826656277753},{"id":"gaz_via_nicotera","name":"Via Nicotera","lat":41.90924918540069,"lng":12.477244588924023},{"id":"gaz_via_orazio","name":"Via Orazio","lat":41.9079462938855,"lng":12.463458865543028},{"id":"gaz_via_panisperna","name":"Via Panisperna","lat":41.895284697601364,"lng":12.493505681387911},{"id":"gaz_via_popolonia","name":"Via Popolonia","lat":41.877284697601364,"lng":12.481505681387911},{"id":"gaz_via_ricasoli","name":"Via Ricasoli","lat":41.897284697601364,"lng":12.494505681387911},{"id":"gaz_via_valadier","name":"Via Valadier","lat":41.908284697601364,"lng":12.471505681387911},{"id":"gaz_via_veneto","name":"Via Veneto","lat":41.905284697601364,"lng":12.490505681387911},{"id":"gaz_via_venti_settembre","name":"Via Venti Settembre","lat":41.901284697601364,"lng":12.493505681387911},{"id":"gaz_via_villari","name":"Via Vìllari","lat":41.893284697601364,"lng":12.510505681387911},{"id":"gaz_via_zanardelli","name":"Via Zanardelli","lat":41.90163081118981,"lng":12.473479456273962},{"id":"gaz_viale_della_regina","name":"Viale della Regina","lat":41.91163081118981,"lng":12.487479456273962},{"id":"gaz_viale_liegi","name":"Viale Liegi","lat":41.91363081118981,"lng":12.512479456273962},{"id":"gaz_viale_regina_margherita","name":"Viale Regina Margherita","lat":41.91063081118981,"lng":12.498479456273962},{"id":"gaz_vicenza","name":"Vicenza","lat":45.54782811997265,"lng":11.54666863709906},{"id":"gaz_vicolo_ciancaleoni","name":"Vicolo Ciancaleoni","lat":41.89363081118981,"lng":12.476479456273962},{"id":"gaz_vicolo_della_bucimazza","name":"Vicolo della Bucimazza","lat":41.88963081118981,"lng":12.471479456273962},{"id":"gaz_vicolo_delle_grotte_del_teatro","name":"Vicolo delle Grotte del Teatro","lat":41.89063081118981,"lng":12.467479456273962},{"id":"gaz_villa_borghese","name":"Villa Borghese","lat":41.91363081118981,"lng":12.487479456273962},{"id":"gaz_villa_celimontana","name":"Villa Celimontana","lat":41.88463081118981,"lng":12.497479456273962},{"id":"gaz_villa_deste","name":"Villa d'Este","lat":41.95975597738329,"lng":12.791413747816448},{"id":"gaz_villa_gregoriana","name":"Villa Gregoriana","lat":41.95575597738329,"lng":12.799413747816448},{"id":"gaz_viminale","name":"Viminale","lat":41.8973,"lng":12.4925},{"id":"gaz_vite","name":"Vite","lat":41.89163081118981,"lng":12.474479456273962},{"id":"gaz_zagarolo","name":"Zagarolo","lat":41.839732856050645,"lng":12.829976839865573}];
+
+const CHAR_REFS=[
+  {ref_id:"ref_00002",place_id:"collegio_romano",gaz_id:"gaz_collegio_romano",
+   toponym:"Collegio Romano",surface_toponym:null,agent:"ingravallo",
+   narrative_role:"marker",reality_status:"imported",spatial_det:"Approximate",spatial_rel:null,
+   excerpt:"L’invito, comme l’ata vota, gli era stato fatto per telefono due giorni avanti, con una chiamata «dall’esterno» al Collegio Romano, cioè a Santo Stefano del Cacco.",
+   page:18,source:"QP 18",floating:false},
+  {ref_id:"ref_00012",place_id:"santa_maria_in_porta_paradisi",gaz_id:"gaz_santa_maria_in_porta_paradisi",
+   toponym:"Santa Maria in Porta Paradisi",surface_toponym:null,agent:"ingravallo",
+   narrative_role:"marker",reality_status:"imported",spatial_det:"Approximate",spatial_rel:null,
+   excerpt:"[...] coi bei moccoloni di Sant’Agnese in Agone e di Santa Maria in Porta Paradisi a la Candelora, a la benedizione dei ceri [...].",
+   page:19,source:"QP 19",floating:false},
+  {ref_id:"ref_000015",place_id:"via_delle_oche",gaz_id:null,
+   toponym:"Via delle Oche",surface_toponym:null,agent:"ingravallo",
+   narrative_role:"projectedspace",reality_status:"Transformed",spatial_det:"Relative",spatial_rel:null,
+   excerpt:"lui, no, no, non era « bello »: e nemmeno gli riusciva di consolarsi con quel proverbio che aveva udito da una ragazza, al dispensario celtico di via delle Oche: « I òmen hin semper bèi. »",
+   page:21,source:"QP 21",floating:true},
+  {ref_id:"ref_000016",place_id:"via_merulana",gaz_id:"gaz_via_merulana",
+   toponym:"Via Merulana",surface_toponym:null,agent:"ingravallo",
+   narrative_role:"setting",reality_status:"imported",spatial_det:"Approximate",spatial_rel:null,
+   excerpt:"Quando i due agenti gli dissero: «Se so’ sparati a via Merulana: ar ducentodicinnove: su le scale: ner palazzo de li pescicani...», un fiotto di sangue incuriosito, forse angosciato, gli inondò il ventricolo di destra.",
+   page:27,source:"QP 27",floating:false},
+  {ref_id:"ref_000017",place_id:"palazzo_219",gaz_id:"gaz_via_merulana",
+   toponym:"Via Merulana, 219",surface_toponym:"palazzo de li pescicani",agent:"ingravallo",
+   narrative_role:"setting",reality_status:"Transformed",spatial_det:"Approximate",spatial_rel:"Inside",
+   excerpt:"Quando i due agenti gli dissero: «Se so’ sparati a via Merulana: ar ducentodicinnove: su le scale: ner palazzo de li pescicani...», un fiotto di sangue incuriosito, forse angosciato, gli inondò il ventricolo di destra.",
+   page:27,source:"QP 27",floating:false}
+];
+
+const SCENE_REFS=[
+  {ref_id:"ref_000020",place_id:"viminale",gaz_id:"gaz_viminale",
+   toponym:"Viminale",surface_toponym:null,agent:"ingravallo|biondone|sgranfia",
+   narrative_role:"route",reality_status:"Imported",spatial_det:"Precise",spatial_rel:null,
+   route_of:"tragitto_viminale_merulana",route_order:1,
+   excerpt:"Saliti sul PV e discesi appunto al Viminale, presero il tram di San Giovanni. Sicché in una ventina di minuti raggiunsero il civico ducentodicinnove.",
+   page:27,source:"QP 27"},
+  {ref_id:"ref_000021",place_id:"san_giovanni_in_laterano",gaz_id:"gaz_san_giovanni_in_laterano",
+   toponym:"San Giovanni in Laterano",surface_toponym:null,agent:"ingravallo|biondone|sgranfia",
+   narrative_role:"route",reality_status:"Imported",spatial_det:"Precise",spatial_rel:null,
+   route_of:"tragitto_viminale_merulana",route_order:2,
+   excerpt:"Saliti sul PV e discesi appunto al Viminale, presero il tram di San Giovanni. Sicché in una ventina di minuti raggiunsero il civico ducentodicinnove.",
+   page:27,source:"QP 27"},
+  {ref_id:"ref_000022",place_id:"palazzo_219_route",gaz_id:"gaz_via_merulana",
+   toponym:"Palazzo al 219",surface_toponym:"palazzo al 219",agent:"ingravallo|biondone|sgranfia",
+   narrative_role:"route",reality_status:"Imported",spatial_det:"Precise",spatial_rel:null,
+   route_of:"tragitto_viminale_merulana",route_order:3,
+   excerpt:"Saliti sul PV e discesi appunto al Viminale, presero il tram di San Giovanni. Sicché in una ventina di minuti raggiunsero il civico ducentodicinnove.",
+   page:27,source:"QP 27"},
+  {ref_id:"ref_000024",place_id:"palazzo_219_a",gaz_id:"gaz_via_merulana",
+   toponym:"Via Merulana, 219",surface_toponym:"palazzo dell’Oro",agent:"ingravallo|biondone|sgranfia",
+   narrative_role:"setting",reality_status:"Transformed",spatial_det:"Precise",spatial_rel:"Inside",
+   excerpt:"Il palazzo dell’Oro, o dei pescicani che fusse, era là: cinque piani, più il mezzanino. Intignazzato e grigio.",
+   page:28,source:"A 25"},
+  {ref_id:"ref_000025",place_id:"palazzo_219_b",gaz_id:"gaz_via_merulana",
+   toponym:"Via Merulana, 219",surface_toponym:"ben nota architettura",agent:"ingravallo",
+   narrative_role:"setting",reality_status:"Transformed",spatial_det:"Relative",spatial_rel:"Inside",
+   excerpt:"Ingravallo, si può dire, la conosceva col cuore: e difatti un lieve batticuore lo prese, ad avvicinare coi due agenti la ben nota architettura.",
+   page:28,source:"A 26"},
+  {ref_id:"ref_000026",place_id:"palazzo_219_c",gaz_id:"gaz_via_merulana",
+   toponym:"Via Merulana, 219",surface_toponym:"casermone color pidocchio",agent:"ingravallo|biondone|sgranfia",
+   narrative_role:"setting",reality_status:"Transformed",spatial_det:"Relative",spatial_rel:"Inside",
+   excerpt:"Davanti al casermone color pidocchio, una folla: circonfusa d’una rete protettiva di biciclette.",
+   page:28,source:"A 26"},
+  {ref_id:"ref_000027",place_id:"palazzo_219_d",gaz_id:"gaz_via_merulana",
+   toponym:"Via Merulana, 219",surface_toponym:"sto palazzo",agent:"monello",
+   narrative_role:"setting",reality_status:"Transformed",spatial_det:"Relative",spatial_rel:"Inside",
+   excerpt:"Sto palazzo, drento c’è più oro che monnezza.",
+   page:28,source:"A 26"},
+  {ref_id:"ref_000028",place_id:"san_giovanni",gaz_id:"gaz_san_giovanni",
+   toponym:"Commissariato San Giovanni",surface_toponym:null,agent:"narrator",
+   narrative_role:"marker",reality_status:"imported",spatial_det:"Approximate",spatial_rel:null,
+   excerpt:"Il portone socchiuso era guardato da un brigadiere di pubblica sicurezza del commissariato San Giovanni.",
+   page:28,source:"QP 28"},
+  {ref_id:"ref_000029",place_id:"scala_a",gaz_id:"gaz_via_merulana",
+   toponym:"Via Merulana, 219 — Scala A",surface_toponym:"scala A",agent:"ingravallo",
+   narrative_role:"setting",reality_status:"Transformed",spatial_det:"Precise",spatial_rel:"Inside",
+   excerpt:"Ingravallo [...] salì al terzo piano, scala A, dove abitava la derubata.",
+   page:29,source:"A 27"},
+  {ref_id:"ref_000030",place_id:"sacro_cuore",gaz_id:"gaz_sacro_cuore",
+   toponym:"Sacro Cuore",surface_toponym:null,agent:"virginia",
+   narrative_role:"projectedspace",reality_status:"imported",spatial_det:"Indeterminate",spatial_rel:null,
+   excerpt:"La Gina era a scuola tutto il giorno: ar Sacro Core, da le moniche.",
+   page:30,source:"QP 30"}
+];
+
+/* ── Coordinate de-duplicate per il Voronoi narrativo ──── */
+const CS_POINTS=[
+  {id:'gaz_collegio_romano',              lat:41.89763,lng:12.47947},
+  {id:'gaz_santa_maria_in_porta_paradisi',lat:41.90946,lng:12.48838},
+  {id:'gaz_via_merulana',                 lat:41.8892, lng:12.5036},
+  {id:'gaz_viminale',                     lat:41.8973, lng:12.4925},
+  {id:'gaz_san_giovanni_in_laterano',     lat:41.8859, lng:12.5065},
+  {id:'gaz_san_giovanni',                 lat:41.8878, lng:12.5030},
+  {id:'gaz_sacro_cuore',                  lat:41.9022, lng:12.4975}
+];
+const CS_GAZ_IDS=new Set(CS_POINTS.map(p=>p.id));
+
+const GAZ_PRIMARY_ROLE={
+  'gaz_collegio_romano':'marker',
+  'gaz_santa_maria_in_porta_paradisi':'marker',
+  'gaz_via_merulana':'setting',
+  'gaz_viminale':'route',
+  'gaz_san_giovanni_in_laterano':'route',
+  'gaz_san_giovanni':'marker',
+  'gaz_sacro_cuore':'projectedspace'
+};
+</script>
+
+<!-- ═══════════════ APPLICATION ═══════════════ -->
+<script>
+/* ── CDN check ─────────────────────────────────────────── */
+if(typeof L==='undefined'||typeof d3==='undefined'){
+  document.body.style.cssText='background:#07070f;display:flex;align-items:center;justify-content:center;height:100vh;';
+  document.body.innerHTML='<div style="color:#fff;text-align:center;font-family:sans-serif;max-width:480px;padding:40px">'
+    +'<h2 style="font-size:20px;margin-bottom:16px">⚠ Connessione Internet richiesta</h2>'
+    +'<p style="color:#888;font-size:14px;line-height:1.7">GaddAtlas richiede Leaflet e D3 dai CDN online.<br>'
+    +'Per usare <strong style="color:#fff">localmente</strong>, avvia un server:<br>'
+    +'<code style="color:#4fc3f7">python3 -m http.server 8080</code><br>'
+    +'poi apri <code style="color:#4fc3f7">localhost:8080</code>.<br><br>'
+    +'Su <strong style="color:#fff">GitHub Pages</strong> funziona senza configurazione.</p>'
+    +'</div>';
+  throw new Error('CDN libraries not loaded');
+}
+
+/* GSAP migliora le transizioni, ma i click devono funzionare anche se il CDN non risponde. */
+const FX=window.gsap?window.gsap:{
+  killTweensOf(){},
+  set(target,vars){applyFx(target,vars);},
+  to(target,vars){applyFx(target,vars);if(typeof vars.onComplete==='function')setTimeout(vars.onComplete,(vars.duration||0)*1000);},
+  fromTo(target,fromVars,toVars){applyFx(target,fromVars);requestAnimationFrame(()=>applyFx(target,toVars));}
+};
+function fxTargets(target){
+  if(typeof target==='string')return [...document.querySelectorAll(target)];
+  if(target instanceof Element||target===window||target===document)return [target];
+  if(target&&typeof target.length==='number')return [...target];
+  return [];
+}
+function applyFx(target,vars={}){
+  fxTargets(target).forEach(el=>{
+    if('opacity'in vars)el.style.opacity=vars.opacity;
+    const tx='x'in vars?vars.x:null, ty='y'in vars?vars.y:null;
+    if(tx!==null||ty!==null){
+      const x=tx!==null?(typeof tx==='number'?`${tx}px`:tx):'0';
+      const y=ty!==null?(typeof ty==='number'?`${ty}px`:ty):'0';
+      el.style.transform=`translate(${x}, ${y})`;
+    }
+  });
+}
+
+/* ── Visual encoding ──────────────────────────────────── */
+const ROLE_COLOR={marker:'#4fc3f7',setting:'#ffb74d',Setting:'#ffb74d',projectedspace:'#ba68c8',route:'#81c784',Imported:'#81c784'};
+const ROLE_LABEL={marker:'Marker',setting:'Setting',Setting:'Setting',projectedspace:'Spazio proiettato',route:'Route'};
+const STATUS_DASH={imported:null,Imported:null,Transformed:'8 4',transformed:'8 4'};
+const STATUS_LABEL={imported:'Imported',Imported:'Imported',Transformed:'Transformed',transformed:'Transformed'};
+const DET_BLUR={Precise:0,Approximate:1.5,Relative:4,Indeterminate:7};
+const DET_LABEL={Precise:'Precisa',Approximate:'Approssimata',Relative:'Relativa',Indeterminate:'Indeterminata'};
+
+function hexToRgb(hex){
+  const clean=(hex||'#ffffff').replace('#','');
+  const full=clean.length===3?clean.split('').map(c=>c+c).join(''):clean;
+  const n=parseInt(full,16);
+  return {r:(n>>16)&255,g:(n>>8)&255,b:n&255};
+}
+function rgbaFromHex(hex,a){
+  const {r,g,b}=hexToRgb(hex);
+  return `rgba(${r},${g},${b},${a})`;
+}
+
+/* ── Tile URL helpers ─────────────────────────────────── */
+function tileCoords(lat,lng,z){
+  const n=1<<z,x=Math.floor((lng+180)/360*n);
+  const lr=lat*Math.PI/180;
+  const y=Math.floor((1-Math.log(Math.tan(lr)+1/Math.cos(lr))/Math.PI)/2*n);
+  return{x,y,z};
+}
+function tileToScreen(tx,ty,zoom){
+  const n=1<<zoom;
+  const north=Math.atan(Math.sinh(Math.PI*(1-2*ty/n)))*180/Math.PI;
+  const west=(tx/n)*360-180;
+  const south=Math.atan(Math.sinh(Math.PI*(1-2*(ty+1)/n)))*180/Math.PI;
+  const east=((tx+1)/n)*360-180;
+  const nw=map.latLngToContainerPoint([north,west]);
+  const se=map.latLngToContainerPoint([south,east]);
+  const s='abcd'[(tx+ty)%4];
+  return{url:`https://${s}.basemaps.cartocdn.com/dark_all/${zoom}/${tx}/${ty}@2x.png`,
+    x:nw.x,y:nw.y,w:Math.max(1,se.x-nw.x),h:Math.max(1,se.y-nw.y)};
+}
+function getTileGrid(lat,lng,zoom,r=1){
+  const{x:cx,y:cy}=tileCoords(lat,lng,zoom);
+  const res=[];
+  for(let dy=-r;dy<=r;dy++)for(let dx=-r;dx<=r;dx++)res.push(tileToScreen(cx+dx,cy+dy,zoom));
+  return res;
+}
+function pointInTile(lat,lng,zoom){
+  const{x:tx,y:ty}=tileCoords(lat,lng,zoom);
+  const n=1<<zoom;
+  const fx=((lng+180)/360*n)-tx;
+  const lr=lat*Math.PI/180;
+  const fy=((1-Math.log(Math.tan(lr)+1/Math.cos(lr))/Math.PI)/2*n)-ty;
+  return{fx,fy};
+}
+
+/* ── Map init ─────────────────────────────────────────── */
+const map=L.map('map',{center:[41.895,12.490],zoom:14,zoomControl:false,
+  attributionControl:true,minZoom:11,maxZoom:18});
+L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',{
+  attribution:'&copy; OpenStreetMap &copy; CARTO',
+  subdomains:'abcd',maxZoom:20,detectRetina:true,crossOrigin:'anonymous'
+}).addTo(map);
+
+/* ── SVG Voronoi overlay ──────────────────────────────── */
+const mapWrap=document.getElementById('map-wrap');
+const svgEl=document.createElementNS('http://www.w3.org/2000/svg','svg');
+svgEl.id='voronoi-svg';
+mapWrap.appendChild(svgEl);
+const svgSel=d3.select(svgEl);
+const defsEl =svgSel.append('defs').attr('id','vdefs');
+const bgG    =svgSel.append('g').attr('id','bg-cells');
+const imgG   =svgSel.append('g').attr('id','cs-images').style('pointer-events','none');
+const csG    =svgSel.append('g').attr('id','cs-borders');
+const dotG   =svgSel.append('g').attr('id','dots').style('pointer-events','none');
+
+const voronoiPaths=new Map();    // gazId → border path element
+const CS_SHAPES=new Map();       // gazId → {d, bbox, tiles, color, dash}
+
+function redrawVoronoi(){
+  const W=mapWrap.offsetWidth,H=mapWrap.offsetHeight;
+  svgEl.setAttribute('width',W);svgEl.setAttribute('height',H);
+
+  /* ── Background Voronoi (all 196 points) */
+  const bgPts=GAZ_ALL.map(g=>{const p=map.latLngToContainerPoint([g.lat,g.lng]);return[p.x,p.y];});
+  const bgDel=d3.Delaunay.from(bgPts);
+  const bgVor=bgDel.voronoi([0,0,W,H]);
+  bgG.selectAll('path').data(GAZ_ALL,g=>g.id).join('path')
+    .attr('d',(_,i)=>bgVor.renderCell(i))
+    .attr('fill','transparent')
+    .attr('stroke','rgba(255,255,255,0.11)')
+    .attr('stroke-width',0.5)
+    .attr('stroke-linejoin','round')
+    .style('pointer-events','none');
+
+  /* ── Case-study cells: highlighted from the complete Rome Voronoi, not recalculated alone */
+  const csCells=CS_POINTS.map(point=>{
+    const allIndex=GAZ_ALL.findIndex(g=>g.id===point.id);
+    if(allIndex<0)return null;
+    const d=bgVor.renderCell(allIndex);
+    return d?{...point,allIndex,d}:null;
+  }).filter(Boolean);
+  const z=Math.min(map.getZoom(),15);
+
+  /* Update defs clipPaths */
+  csCells.forEach(g=>{
+    const d=g.d;
+    const clipId=`cs-clip-${g.id}`;
+    let clip=defsEl.select(`#${clipId}`);
+    if(clip.empty()){clip=defsEl.append('clipPath').attr('id',clipId);clip.append('path');}
+    clip.select('path').attr('d',d);
+  });
+
+  /* Update tile images */
+  imgG.selectAll('g.cs-img').data(csCells,g=>g.id)
+    .join(enter=>enter.append('g').attr('class','cs-img')
+        .attr('clip-path',g=>`url(#cs-clip-${g.id})`),
+      update=>update,exit=>exit.remove())
+    .each(function(g,i){
+      const tiles=getTileGrid(g.lat,g.lng,z,1);
+      d3.select(this).selectAll('image').data(tiles,t=>t.url)
+        .join('image')
+        .attr('href',t=>t.url)
+        .attr('x',t=>t.x).attr('y',t=>t.y)
+        .attr('width',t=>t.w).attr('height',t=>t.h)
+        .attr('preserveAspectRatio','none').attr('opacity',0.85)
+        .on('error',function(){this.setAttribute('opacity','0');});
+  });
+
+  /* Update colored borders */
+  csG.selectAll('path.cs-border').data(csCells,g=>g.id)
+    .join('path')
+    .attr('class','cs-border')
+    .attr('data-gaz',g=>g.id)
+    .attr('d',g=>g.d)
+    .attr('fill',g=>`${ROLE_COLOR[GAZ_PRIMARY_ROLE[g.id]]||'#fff'}14`)
+    .attr('stroke',g=>ROLE_COLOR[GAZ_PRIMARY_ROLE[g.id]]||'#fff')
+    .attr('stroke-width',2.2)
+    .attr('stroke-linejoin','round')
+    .attr('vector-effect','non-scaling-stroke')
+    .style('filter',g=>`drop-shadow(0 0 8px ${rgbaFromHex(ROLE_COLOR[GAZ_PRIMARY_ROLE[g.id]]||'#fff',.65)})`)
+    .style('cursor','pointer')
+    .each(function(g){voronoiPaths.set(g.id,this);})
+    .on('click',(_,g)=>onMapTileClick(g.id))
+    .on('mouseenter',function(e,g){
+      d3.select(this).attr('stroke-width',4);
+      showToast(GAZ_ALL.find(a=>a.id===g.id)?.name||g.id);
+    })
+    .on('mouseleave',function(){d3.select(this).attr('stroke-width',2.5);});
+
+  /* Centroid dots — all 196 (small) + case study (larger + colored) */
+  const allDotData=[...GAZ_ALL.map((g,i)=>({...g,pt:bgPts[i],isCS:CS_GAZ_IDS.has(g.id),size:CS_GAZ_IDS.has(g.id)?5:2}))];
+  dotG.selectAll('circle').data(allDotData,g=>g.id).join('circle')
+    .attr('cx',g=>g.pt[0]).attr('cy',g=>g.pt[1])
+    .attr('r',g=>g.size)
+    .attr('fill',g=>g.isCS?(ROLE_COLOR[GAZ_PRIMARY_ROLE[g.id]]||'#fff'):'rgba(255,255,255,0.3)')
+    .attr('stroke',g=>g.isCS?'rgba(0,0,0,0.4)':'none')
+    .attr('stroke-width',g=>g.isCS?1:0);
+
+  /* Store shape data for flying clones */
+  csCells.forEach(g=>{
+    const d=g.d;
+    const tiles=getTileGrid(g.lat,g.lng,z,1);
+    const color=ROLE_COLOR[GAZ_PRIMARY_ROLE[g.id]]||'#fff';
+    const firstRef=[...CHAR_REFS,...SCENE_REFS].find(r=>r.gaz_id===g.id);
+    const dash=firstRef?STATUS_DASH[firstRef.reality_status]:null;
+    CS_SHAPES.set(g.id,{d,tiles,color,dash});
+  });
+}
+
+function safeRedrawVoronoi(){
+  try{redrawVoronoi();}
+  catch(err){console.error('Errore nel calcolo Voronoi:',err);}
+}
+map.on('moveend zoomend viewreset resize',safeRedrawVoronoi);
+map.whenReady(safeRedrawVoronoi);
+
+function onMapTileClick(gazId){
+  if(appState!=='map')return;
+  showToast(`${GAZ_ALL.find(g=>g.id===gazId)?.name||gazId} — scegli Personaggio o Scena per esplorare`);
+}
+
+/* ── Toast ────────────────────────────────────────────── */
+let toastTimer;
+function showToast(msg){
+  const el=document.getElementById('toast');el.textContent=msg;
+  FX.killTweensOf(el);FX.fromTo(el,{opacity:0,y:6},{opacity:1,y:0,duration:.3});
+  clearTimeout(toastTimer);toastTimer=setTimeout(()=>FX.to(el,{opacity:0,duration:.4}),2800);
+}
+
+/* ── captureCell — builds a self-contained SVG from Voronoi shape ── */
+function captureCell(gazId,refForEncoding){
+  const info=CS_SHAPES.get(gazId);
+  if(!info||!info.d)return null;
+  const{d,tiles}=info;
+  const color=ROLE_COLOR[refForEncoding?.narrative_role||GAZ_PRIMARY_ROLE[gazId]]||'#fff';
+  const dash=STATUS_DASH[refForEncoding?.reality_status]??info.dash;
+  const blur=DET_BLUR[refForEncoding?.spatial_det]??0;
+  const isAbstract=refForEncoding?.spatial_det==='Indeterminate'||refForEncoding?.narrative_role==='projectedspace';
+  const tintCore=isAbstract?'.36':'.24';
+  const tintMid=isAbstract?'.14':'.08';
+
+  const tmp=document.createElementNS('http://www.w3.org/2000/svg','path');
+  let bb;
+  try{
+    tmp.setAttribute('d',d);svgEl.appendChild(tmp);
+    bb=tmp.getBBox();
+  }catch(err){
+    if(tmp.parentNode)svgEl.removeChild(tmp);
+    return null;
+  }
+  if(tmp.parentNode)svgEl.removeChild(tmp);
+  if(!bb.width||!bb.height)return null;
+
+  const NS='http://www.w3.org/2000/svg';
+  const svg=document.createElementNS(NS,'svg');
+  svg.setAttribute('viewBox',`${bb.x} ${bb.y} ${bb.width} ${bb.height}`);
+  svg.setAttribute('preserveAspectRatio','xMidYMid meet');
+  svg.style.cssText='width:100%;height:100%;display:block;overflow:hidden';
+
+  const defs=document.createElementNS(NS,'defs');
+  const clip=document.createElementNS(NS,'clipPath');
+  const cid=`c-${gazId.replace(/_/g,'-')}-${Math.random().toString(36).slice(2,6)}`;
+  clip.setAttribute('id',cid);
+  const cp=document.createElementNS(NS,'path');cp.setAttribute('d',d);
+  clip.appendChild(cp);defs.appendChild(clip);
+
+  const grad=document.createElementNS(NS,'radialGradient');
+  const gid=`g-${cid}`;
+  grad.setAttribute('id',gid);
+  grad.setAttribute('cx','50%');grad.setAttribute('cy','46%');grad.setAttribute('r','68%');
+  [['0%',color,tintCore],['54%',color,tintMid],['100%','#020712','.62']].forEach(([off,stop,op])=>{
+    const st=document.createElementNS(NS,'stop');
+    st.setAttribute('offset',off);st.setAttribute('stop-color',stop);st.setAttribute('stop-opacity',op);
+    grad.appendChild(st);
+  });
+  defs.appendChild(grad);
+
+  const pattern=document.createElementNS(NS,'pattern');
+  const pid=`p-${cid}`;
+  pattern.setAttribute('id',pid);pattern.setAttribute('width','18');pattern.setAttribute('height','18');
+  pattern.setAttribute('patternUnits','userSpaceOnUse');
+  const pl1=document.createElementNS(NS,'path');
+  pl1.setAttribute('d','M0 9 H18 M9 0 V18');
+  pl1.setAttribute('stroke',rgbaFromHex(color,.24));pl1.setAttribute('stroke-width','.55');
+  pattern.appendChild(pl1);
+  const pl2=document.createElementNS(NS,'path');
+  pl2.setAttribute('d','M0 0 L18 18 M18 0 L0 18');
+  pl2.setAttribute('stroke','rgba(255,255,255,.18)');pl2.setAttribute('stroke-width','.35');
+  pattern.appendChild(pl2);
+  defs.appendChild(pattern);
+
+  const soft=document.createElementNS(NS,'filter');
+  const softId=`soft-${cid}`;
+  soft.setAttribute('id',softId);soft.setAttribute('x','-35%');soft.setAttribute('y','-35%');
+  soft.setAttribute('width','170%');soft.setAttribute('height','170%');
+  const shadow=document.createElementNS(NS,'feDropShadow');
+  shadow.setAttribute('dx','0');shadow.setAttribute('dy','5');shadow.setAttribute('stdDeviation','5');
+  shadow.setAttribute('flood-color',color);shadow.setAttribute('flood-opacity','.45');
+  soft.appendChild(shadow);defs.appendChild(soft);
+  svg.appendChild(defs);
+
+  const fallback=document.createElementNS(NS,'path');
+  fallback.setAttribute('d',d);
+  fallback.setAttribute('fill','#101a22');
+  fallback.setAttribute('fill-opacity','0.72');
+  svg.appendChild(fallback);
+
+  if(blur>0){
+    const f=document.createElementNS(NS,'filter');
+    const fid=`fb-${cid}`;f.setAttribute('id',fid);
+    f.setAttribute('x','-30%');f.setAttribute('y','-30%');
+    f.setAttribute('width','160%');f.setAttribute('height','160%');
+    const fg=document.createElementNS(NS,'feGaussianBlur');
+    fg.setAttribute('stdDeviation',blur);f.appendChild(fg);defs.appendChild(f);
+    const g=document.createElementNS(NS,'g');
+    g.setAttribute('clip-path',`url(#${cid})`);
+    g.setAttribute('filter',`url(#${fid})`);
+    tiles.forEach(t=>{
+      const img=document.createElementNS(NS,'image');
+      img.setAttribute('href',t.url);img.setAttribute('x',t.x);img.setAttribute('y',t.y);
+      img.setAttribute('width',t.w);img.setAttribute('height',t.h);
+      img.setAttribute('preserveAspectRatio','none');img.setAttribute('opacity','0.88');
+      img.addEventListener('error',()=>img.setAttribute('opacity','0'));
+      g.appendChild(img);
+    });
+    svg.appendChild(g);
+  }else{
+    tiles.forEach(t=>{
+      const img=document.createElementNS(NS,'image');
+      img.setAttribute('href',t.url);img.setAttribute('x',t.x);img.setAttribute('y',t.y);
+      img.setAttribute('width',t.w);img.setAttribute('height',t.h);
+      img.setAttribute('clip-path',`url(#${cid})`);
+      img.setAttribute('preserveAspectRatio','none');img.setAttribute('opacity','0.88');
+      img.addEventListener('error',()=>img.setAttribute('opacity','0'));
+      svg.appendChild(img);
+    });
+  }
+
+  const tint=document.createElementNS(NS,'path');
+  tint.setAttribute('d',d);
+  tint.setAttribute('fill',`url(#${gid})`);
+  tint.setAttribute('clip-path',`url(#${cid})`);
+  tint.setAttribute('pointer-events','none');
+  svg.appendChild(tint);
+
+  const texture=document.createElementNS(NS,'path');
+  texture.setAttribute('d',d);
+  texture.setAttribute('fill',`url(#${pid})`);
+  texture.setAttribute('clip-path',`url(#${cid})`);
+  texture.setAttribute('opacity',refForEncoding?.spatial_det==='Precise'?'.46':refForEncoding?.spatial_det==='Approximate'?'.32':isAbstract?'.28':'.2');
+  texture.setAttribute('pointer-events','none');
+  svg.appendChild(texture);
+
+  const innerShade=document.createElementNS(NS,'path');
+  innerShade.setAttribute('d',d);
+  innerShade.setAttribute('fill','none');
+  innerShade.setAttribute('stroke','rgba(255,255,255,.34)');
+  innerShade.setAttribute('stroke-width','1');
+  innerShade.setAttribute('stroke-linejoin','round');
+  innerShade.setAttribute('stroke-opacity','.55');
+  innerShade.setAttribute('vector-effect','non-scaling-stroke');
+  svg.appendChild(innerShade);
+
+  /* Border */
+  const border=document.createElementNS(NS,'path');
+  border.setAttribute('d',d);
+  border.setAttribute('fill','none');
+  border.setAttribute('stroke',color);
+  border.setAttribute('stroke-width','2.8');
+  if(dash)border.setAttribute('stroke-dasharray',dash);
+  border.setAttribute('stroke-linejoin','round');
+  border.setAttribute('vector-effect','non-scaling-stroke');
+  border.setAttribute('filter',`url(#${softId})`);
+
+  const edge=document.createElementNS(NS,'path');
+  edge.setAttribute('d',d);
+  edge.setAttribute('fill','none');
+  edge.setAttribute('stroke',color);
+  edge.setAttribute('stroke-width','.9');
+  edge.setAttribute('stroke-opacity','.82');
+  edge.setAttribute('stroke-linejoin','round');
+  edge.setAttribute('vector-effect','non-scaling-stroke');
+  if(dash)edge.setAttribute('stroke-dasharray',dash);
+
+  /* Outer glow */
+  const glow=document.createElementNS(NS,'path');
+  glow.setAttribute('d',d);glow.setAttribute('fill','none');
+  glow.setAttribute('stroke',color);glow.setAttribute('stroke-width','8');
+  glow.setAttribute('stroke-opacity','0.22');glow.setAttribute('stroke-linejoin','round');
+  glow.setAttribute('vector-effect','non-scaling-stroke');
+
+  const dot=document.createElementNS(NS,'circle');
+  dot.setAttribute('cx',bb.x+bb.width/2);dot.setAttribute('cy',bb.y+bb.height/2);
+  dot.setAttribute('r',Math.max(2.2,Math.min(bb.width,bb.height)*0.055));
+  dot.setAttribute('fill','#06101a');
+  dot.setAttribute('stroke',color);
+  dot.setAttribute('stroke-width','1.6');
+  dot.setAttribute('vector-effect','non-scaling-stroke');
+  dot.setAttribute('filter',`url(#${softId})`);
+
+  svg.appendChild(glow);
+  svg.appendChild(border);
+  svg.appendChild(edge);
+  svg.appendChild(dot);
+
+  return svg;
+}
+
+/* ── Via delle Oche special SVG (no map) ─────────────── */
+function buildOachesvg(ref){
+  const color=ROLE_COLOR.projectedspace;
+  const NS='http://www.w3.org/2000/svg';
+  const svg=document.createElementNS(NS,'svg');
+  svg.setAttribute('viewBox','0 0 140 100');
+  svg.setAttribute('preserveAspectRatio','xMidYMid meet');
+  svg.style.cssText='width:100%;height:100%;display:block;overflow:hidden';
+  const d2='M34,28 C42,13 59,12 70,20 C82,12 100,20 101,35 C118,42 116,62 103,69 C101,86 80,88 69,78 C56,88 36,82 35,67 C18,61 19,39 34,28 Z';
+  const dOuter='M22,24 C38,6 60,4 74,14 C89,7 110,17 112,33 C132,41 129,68 111,76 C105,95 79,98 66,87 C50,98 23,88 24,72 C6,65 3,40 22,24 Z';
+  const defs=document.createElementNS(NS,'defs');
+
+  const rg=document.createElementNS(NS,'radialGradient');
+  rg.setAttribute('id','oach-rg');rg.setAttribute('cx','49%');rg.setAttribute('cy','45%');rg.setAttribute('r','58%');
+  [[0,'0.34'],[.45,'0.18'],[.74,'0.08'],[1,'0.02']].forEach(([o,op])=>{const s=document.createElementNS(NS,'stop');s.setAttribute('offset',`${o*100}%`);s.setAttribute('stop-color',color);s.setAttribute('stop-opacity',op);rg.appendChild(s);});
+  defs.appendChild(rg);
+
+  const clip=document.createElementNS(NS,'clipPath');clip.setAttribute('id','oach-clip');
+  const clipPath=document.createElementNS(NS,'path');clipPath.setAttribute('d',d2);clip.appendChild(clipPath);defs.appendChild(clip);
+
+  const pat=document.createElementNS(NS,'pattern');
+  pat.setAttribute('id','oach-mapgrid');pat.setAttribute('width','14');pat.setAttribute('height','14');
+  pat.setAttribute('patternUnits','userSpaceOnUse');
+  const p1=document.createElementNS(NS,'path');
+  p1.setAttribute('d','M0 7 H14 M7 0 V14 M0 0 L14 14 M14 0 L0 14');
+  p1.setAttribute('stroke','rgba(230,235,240,.20)');p1.setAttribute('stroke-width','.45');
+  pat.appendChild(p1);defs.appendChild(pat);
+
+  const noise=document.createElementNS(NS,'filter');noise.setAttribute('id','oach-noise');
+  const turb=document.createElementNS(NS,'feTurbulence');turb.setAttribute('type','fractalNoise');turb.setAttribute('baseFrequency','.052');turb.setAttribute('numOctaves','3');turb.setAttribute('seed','9');noise.appendChild(turb);
+  const disp=document.createElementNS(NS,'feDisplacementMap');disp.setAttribute('in','SourceGraphic');disp.setAttribute('scale','2.8');noise.appendChild(disp);defs.appendChild(noise);
+
+  const blur=document.createElementNS(NS,'filter');blur.setAttribute('id','oach-blur');blur.setAttribute('x','-30%');blur.setAttribute('y','-30%');blur.setAttribute('width','160%');blur.setAttribute('height','160%');
+  const blurFg=document.createElementNS(NS,'feGaussianBlur');blurFg.setAttribute('stdDeviation','3.2');blur.appendChild(blurFg);defs.appendChild(blur);
+
+  const bf=document.createElementNS(NS,'filter');bf.setAttribute('id','oach-bf');
+  bf.setAttribute('x','-45%');bf.setAttribute('y','-45%');bf.setAttribute('width','190%');bf.setAttribute('height','190%');
+  const ds1=document.createElementNS(NS,'feDropShadow');ds1.setAttribute('dx','0');ds1.setAttribute('dy','8');ds1.setAttribute('stdDeviation','7');ds1.setAttribute('flood-color','#000');ds1.setAttribute('flood-opacity','.55');bf.appendChild(ds1);
+  const ds2=document.createElementNS(NS,'feDropShadow');ds2.setAttribute('dx','0');ds2.setAttribute('dy','0');ds2.setAttribute('stdDeviation','7');ds2.setAttribute('flood-color',color);ds2.setAttribute('flood-opacity','.48');bf.appendChild(ds2);defs.appendChild(bf);
+  svg.appendChild(defs);
+
+  const route=document.createElementNS(NS,'path');
+  route.setAttribute('d','M0 52 H38 M102 52 H140');
+  route.setAttribute('fill','none');route.setAttribute('stroke','rgba(210,220,232,.58)');
+  route.setAttribute('stroke-width','1.6');route.setAttribute('stroke-dasharray','8 7');
+  route.setAttribute('stroke-linecap','round');svg.appendChild(route);
+
+  const outer=document.createElementNS(NS,'path');
+  outer.setAttribute('d',dOuter);outer.setAttribute('fill','none');outer.setAttribute('stroke',color);
+  outer.setAttribute('stroke-width','2.1');outer.setAttribute('stroke-dasharray','7 6');
+  outer.setAttribute('stroke-opacity','.66');outer.setAttribute('stroke-linejoin','round');svg.appendChild(outer);
+
+  const bg=document.createElementNS(NS,'path');bg.setAttribute('d',d2);bg.setAttribute('fill','#101820');bg.setAttribute('filter','url(#oach-bf)');svg.appendChild(bg);
+  const haze=document.createElementNS(NS,'path');haze.setAttribute('d',d2);haze.setAttribute('fill',`url(#oach-rg)`);svg.appendChild(haze);
+  const grid=document.createElementNS(NS,'rect');grid.setAttribute('x','16');grid.setAttribute('y','10');grid.setAttribute('width','108');grid.setAttribute('height','78');grid.setAttribute('fill','url(#oach-mapgrid)');grid.setAttribute('clip-path','url(#oach-clip)');grid.setAttribute('opacity','.9');svg.appendChild(grid);
+
+  const spokes=document.createElementNS(NS,'g');spokes.setAttribute('clip-path','url(#oach-clip)');spokes.setAttribute('opacity','.42');
+  ['M70 51 L32 30','M70 51 L95 22','M70 51 L111 60','M70 51 L42 76','M70 51 L67 18','M70 51 L97 78'].forEach(d=>{
+    const l=document.createElementNS(NS,'path');l.setAttribute('d',d);l.setAttribute('stroke','rgba(222,228,235,.42)');l.setAttribute('stroke-width','.75');l.setAttribute('fill','none');spokes.appendChild(l);
+  });
+  svg.appendChild(spokes);
+
+  const mist=document.createElementNS(NS,'path');mist.setAttribute('d',d2);mist.setAttribute('fill','rgba(255,255,255,.16)');mist.setAttribute('filter','url(#oach-noise)');mist.setAttribute('opacity','.28');svg.appendChild(mist);
+  const inner=document.createElementNS(NS,'path');inner.setAttribute('d',d2);inner.setAttribute('fill','none');inner.setAttribute('stroke','rgba(255,255,255,.32)');inner.setAttribute('stroke-width','1.2');inner.setAttribute('stroke-linejoin','round');svg.appendChild(inner);
+  const glow=document.createElementNS(NS,'path');glow.setAttribute('d',d2);glow.setAttribute('fill','none');glow.setAttribute('stroke',color);glow.setAttribute('stroke-width','10');glow.setAttribute('stroke-opacity','0.22');glow.setAttribute('stroke-linejoin','round');glow.setAttribute('filter','url(#oach-blur)');svg.appendChild(glow);
+  const border=document.createElementNS(NS,'path');border.setAttribute('d',d2);border.setAttribute('fill','none');border.setAttribute('stroke',color);border.setAttribute('stroke-width','2.8');border.setAttribute('stroke-opacity','.82');border.setAttribute('stroke-dasharray','8 4');border.setAttribute('stroke-linejoin','round');border.setAttribute('vector-effect','non-scaling-stroke');svg.appendChild(border);
+  const dot=document.createElementNS(NS,'ellipse');dot.setAttribute('cx','70');dot.setAttribute('cy','51');dot.setAttribute('rx','7.2');dot.setAttribute('ry','5.2');dot.setAttribute('fill','#07111c');dot.setAttribute('stroke',color);dot.setAttribute('stroke-width','2');dot.setAttribute('vector-effect','non-scaling-stroke');svg.appendChild(dot);
+  return svg;
+}
+
+/* ── Build tile card div ──────────────────────────────── */
+function buildTileCard(ref,sizeClass='normal-tile'){
+  const card=document.createElement('div');
+  card.className=`tile-card ${sizeClass}`;
+  if(ref.floating)card.classList.add('floating-tile');
+  card.id=`card-${ref.ref_id}`;
+  const color=ROLE_COLOR[ref.narrative_role]||'#fff';
+  const svgArea=document.createElement('div');
+  svgArea.className='tile-svg-area';
+
+  if(ref.floating){
+    svgArea.appendChild(buildOachesvg(ref));
+  }else{
+    const s=captureCell(ref.gaz_id,ref);
+    if(s)svgArea.appendChild(s);
+    else svgArea.style.background='#111';
+  }
+  card.appendChild(svgArea);
+
+  const footer=document.createElement('div');footer.className='tile-footer';
+  const name=ref.surface_toponym||ref.toponym;
+  footer.innerHTML=`<div class="tile-toponym" title="${name}">${name}</div>`+
+    `<div class="tile-page">p.${ref.page} · ${ref.source}</div>`+
+    `<span class="tile-badge" style="color:${color};border-color:${color}40">${ROLE_LABEL[ref.narrative_role]||ref.narrative_role}</span>`;
+  card.appendChild(footer);
+  card.addEventListener('click',()=>openInfoPanel(ref));
+  return card;
+}
+
+function formatAgentLabel(agent){
+  const labels={
+    ingravallo:'Ingravallo',
+    biondone:'Biondone',
+    sgranfia:'Sgranfia',
+    narrator:'Narratore',
+    monello:'Monello',
+    virginia:'Virginia'
+  };
+  return String(agent||'')
+    .split('|')
+    .map(a=>labels[a.trim().toLowerCase()]||a.trim())
+    .filter(Boolean)
+    .join(', ');
+}
+
+function addSceneAgentBadge(card,ref){
+  const badge=document.createElement('div');
+  badge.className='scene-agent-badge';
+  badge.title=formatAgentLabel(ref.agent);
+  badge.innerHTML=`<svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+    <path d="M12 12.2c2.1 0 3.8-1.7 3.8-3.8S14.1 4.6 12 4.6 8.2 6.3 8.2 8.4s1.7 3.8 3.8 3.8Z" stroke-width="2"/>
+    <path d="M4.8 20c.9-3.4 3.4-5.2 7.2-5.2s6.3 1.8 7.2 5.2" stroke-width="2" stroke-linecap="round"/>
+  </svg>`;
+  const label=document.createElement('span');
+  label.textContent=formatAgentLabel(ref.agent);
+  badge.appendChild(label);
+  card.appendChild(badge);
+}
+
+/* ── Info panel ───────────────────────────────────────── */
+let infoPanelOpen=false;
+function isCompactLayout(){
+  return window.matchMedia('(max-width: 980px)').matches;
+}
+function setInfoPanelClosed(){
+  if(isCompactLayout())FX.set('#info-panel',{x:0,y:'100%'});
+  else FX.set('#info-panel',{x:'100%',y:0});
+}
+function showInfoPanel(panel){
+  if(isCompactLayout())FX.to(panel,{x:0,y:0,duration:.45,ease:'power3.out'});
+  else FX.to(panel,{x:0,y:0,duration:.45,ease:'power3.out'});
+}
+function hideInfoPanel(panel){
+  if(isCompactLayout())FX.to(panel,{x:0,y:'100%',duration:.35,ease:'power3.in'});
+  else FX.to(panel,{x:'100%',y:0,duration:.35,ease:'power3.in'});
+}
+function openInfoPanel(ref){
+  const panel=document.getElementById('info-panel');
+  const color=ROLE_COLOR[ref.narrative_role]||'#fff';
+  document.getElementById('info-toponym').textContent=ref.surface_toponym||ref.toponym;
+  document.getElementById('info-place-id').textContent=`${ref.ref_id} · ${ref.gaz_id||'non georeferenziato'}`;
+  document.getElementById('info-excerpt').innerHTML=ref.excerpt;
+  const meta=[
+    ['Personaggio',ref.agent.replace(/\|/g,' · ')],
+    ['Fonte',`${ref.source} (p.${ref.page})`],
+    ['Ruolo narrativo',`<span class="info-badge" style="color:${color};border-color:${color}60">${ROLE_LABEL[ref.narrative_role]||ref.narrative_role}</span>`],
+    ['Statuto di realtà',STATUS_LABEL[ref.reality_status]||ref.reality_status],
+    ['Det. spaziale',DET_LABEL[ref.spatial_det]||ref.spatial_det],
+  ];
+  if(ref.spatial_rel)meta.push(['Relazione spaziale',ref.spatial_rel]);
+  document.getElementById('info-meta').innerHTML=meta.map(([k,v])=>`<div class="info-meta-key">${k}</div><div class="info-meta-val">${v}</div>`).join('');
+  document.getElementById('info-vis').innerHTML=`
+    <div class="vis-row"><div class="swatch-dot" style="background:${color}"></div>Bordo colore → <strong style="color:${color}">${ROLE_LABEL[ref.narrative_role]||ref.narrative_role}</strong></div>
+    <div class="vis-row"><div class="swatch-line" style="background:${STATUS_DASH[ref.reality_status]?`repeating-linear-gradient(90deg,${color} 0 6px,transparent 6px 10px)`:color}"></div>Forma bordo → ${ref.reality_status}</div>
+    <div class="vis-row"><span style="opacity:${Math.max(.25,1-DET_BLUR[ref.spatial_det]/8)};font-size:18px">■</span>Texture → ${DET_LABEL[ref.spatial_det]||ref.spatial_det}${ref.floating?' (spazio non georef.)':''}</div>`;
+  if(!infoPanelOpen){
+    document.getElementById('app').classList.add('info-open');
+    showInfoPanel(panel);
+    infoPanelOpen=true;
+  }
+}
+function closeInfoPanel(){
+  if(!infoPanelOpen)return;
+  document.getElementById('app').classList.remove('info-open');
+  hideInfoPanel(document.getElementById('info-panel'));
+  infoPanelOpen=false;
+}
+document.getElementById('info-close').addEventListener('click',closeInfoPanel);
+window.addEventListener('resize',()=>{if(!infoPanelOpen)setInfoPanelClosed();});
+
+/* ── Build character overlay ──────────────────────────── */
+function buildCharOverlay(){
+  const inner=document.getElementById('explore-inner');
+  inner.innerHTML='';
+
+  const header=document.createElement('div');header.className='view-header';
+  header.innerHTML='<span class="view-label">Vista Personaggio</span><div class="view-title">Il percorso di Ingravallo</div>';
+  inner.appendChild(header);
+
+  const grid=document.createElement('div');grid.id='char-grid';inner.appendChild(grid);
+
+  /* Row 1: 3 tiles */
+  CHAR_REFS.slice(0,3).forEach(ref=>{
+    grid.appendChild(buildTileCard(ref,'normal-tile'));
+  });
+  /* Row 2: 2 tiles */
+  const row2=document.createElement('div');row2.className='row2';
+  CHAR_REFS.slice(3).forEach(ref=>{row2.appendChild(buildTileCard(ref,'normal-tile'));});
+  grid.appendChild(row2);
+}
+
+/* ── Build scene overlay ──────────────────────────────── */
+function buildSceneOverlay(){
+  const inner=document.getElementById('explore-inner');
+  inner.innerHTML='';
+
+  const header=document.createElement('div');header.className='view-header';
+  header.innerHTML='<span class="view-label">Vista Scena</span><div class="view-title">Sulla scena del crimine</div>';
+  inner.appendChild(header);
+
+  const grid=document.createElement('div');grid.id='scene-grid';inner.appendChild(grid);
+
+  /* Route row */
+  const routeRow=document.createElement('div');routeRow.className='route-row';
+  const routeRefs=SCENE_REFS.filter(r=>r.route_of).sort((a,b)=>a.route_order-b.route_order);
+  routeRefs.forEach((ref,i)=>{
+    const c=buildTileCard(ref,'route-tile');
+    addSceneAgentBadge(c,ref);
+    routeRow.appendChild(c);
+    if(i<routeRefs.length-1){
+      const arr=document.createElement('div');arr.className='route-arr';
+      arr.innerHTML=`<svg width="40" height="20" viewBox="0 0 40 20">
+        <line x1="2" y1="10" x2="34" y2="10" stroke="${ROLE_COLOR.route}" stroke-width="1.5" opacity="0.7"/>
+        <polygon points="34,5 40,10 34,15" fill="${ROLE_COLOR.route}" opacity="0.7"/>
+      </svg>`;
+      routeRow.appendChild(arr);
+    }
+  });
+  grid.appendChild(routeRow);
+
+  /* Setting tiles */
+  const settingRefs=SCENE_REFS.filter(r=>!r.route_of&&['setting','Setting'].includes(r.narrative_role));
+  settingRefs.forEach((ref,i)=>{
+    const c=buildTileCard(ref,'small-tile');
+    addSceneAgentBadge(c,ref);
+    if(i===0)c.id='set1'; else if(i===1)c.id='set2';
+    else if(i===2)c.id='set3'; else if(i===3)c.id='set4';
+    else if(i===4)c.id='set5';
+    grid.appendChild(c);
+  });
+
+  /* Marker + projected */
+  const otherRefs=SCENE_REFS.filter(r=>!r.route_of&&!['setting','Setting'].includes(r.narrative_role));
+  otherRefs.forEach((ref,i)=>{
+    const c=buildTileCard(ref,'small-tile');
+    addSceneAgentBadge(c,ref);
+    if(ref.ref_id==='ref_000028')c.id='sg-tile';
+    else if(ref.ref_id==='ref_000030')c.id='prj-tile';
+    grid.appendChild(c);
+  });
+}
+
+/* ── Activate exploration view ────────────────────────── */
+let appState='map'; // 'map' | 'character' | 'scene'
+const TILE_TARGET_W=195;
+
+function activateView(mode){
+  if(appState===mode)return;
+  const prevMode=appState;
+  if(prevMode!=='map')return resetToMap(()=>activateView(mode));
+  appState=mode;
+  document.getElementById('app').classList.add('exploring');
+  safeRedrawVoronoi();
+
+  if(mode==='character')buildCharOverlay();
+  else buildSceneOverlay();
+
+  /* Blur + dim map */
+  mapWrap.classList.add('blurred');
+
+  /* Show overlay */
+  const overlay=document.getElementById('explore-overlay');
+  overlay.classList.add('active');
+  FX.set(overlay,{opacity:0});
+  FX.to(overlay,{opacity:1,duration:.4,ease:'power2.out'});
+
+  /* Staggered tile entrance */
+  const allCards=[...document.querySelectorAll('.tile-card')];
+  FX.set(allCards,{opacity:0,y:18});
+  FX.to(allCards,{opacity:1,y:0,duration:.5,stagger:.07,delay:.25,ease:'power2.out'});
+
+  /* Aggiorna stato attivo bottoni */
+  document.getElementById('btn-map').classList.remove('active');
+  document.getElementById('btn-char').classList.toggle('active', mode==='character');
+  document.getElementById('btn-scene').classList.toggle('active', mode==='scene');
+}
+
+function resetToMap(callback){
+  const overlay=document.getElementById('explore-overlay');
+  closeInfoPanel();
+  document.getElementById('app').classList.remove('exploring');
+  mapWrap.classList.remove('blurred');
+  FX.to(overlay,{opacity:0,duration:.4,ease:'power2.in',onComplete:()=>{
+    overlay.classList.remove('active');
+    document.getElementById('explore-inner').innerHTML='';
+    document.getElementById('btn-map').classList.add('active');
+    document.getElementById('btn-char').classList.remove('active');
+    document.getElementById('btn-scene').classList.remove('active');
+    appState='map';
+    if(callback)callback();
+  }});
+}
+
+/* ── Wire buttons ─────────────────────────────────────── */
+document.getElementById('btn-map').addEventListener('click',()=>{if(appState!=='map')resetToMap();});
+document.getElementById('btn-char').addEventListener('click',()=>activateView('character'));
+document.getElementById('btn-scene').addEventListener('click',()=>activateView('scene'));
+
+/* ── Info panel initial position ─────────────────────── */
+setInfoPanelClosed();
+</script>
+</body>
+</html>
